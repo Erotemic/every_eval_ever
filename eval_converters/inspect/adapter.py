@@ -271,6 +271,8 @@ class InspectAIAdapter(BaseEvaluationAdapter):
             for gen_config, value in vars(eval_config).items() if value is not None
         }
         eval_sandbox = spec.task_args.get("sandbox", None)
+        if eval_sandbox and not isinstance(eval_sandbox, list):
+            eval_sandbox = [eval_sandbox]
         sandbox_type, sandbox_config = ((eval_sandbox or []) + [None, None])[:2]
 
         eval_plan = EvalPlan(

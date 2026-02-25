@@ -180,6 +180,15 @@ def test_gaia_eval():
     assert converted_eval.detailed_evaluation_results.total_rows > 0
 
 
+def test_humaneval_eval():
+    adapter = InspectAIAdapter()
+    metadata_args = {
+        'source_organization_name': 'TestOrg',
+        'evaluator_relationship': EvaluatorRelationship.first_party,
+    }
+
+    converted_eval = _load_eval(adapter, 'tests/data/inspect/2026-02-24T11-23-20+00-00_humaneval_ENiBTeoXr2dbbNcDtpbVvq.json', metadata_args)
+
 def test_convert_model_path_to_standarized_model_ids():
     model_path_to_standarized_id_map = {
         "openai/gpt-4o-mini": "openai/gpt-4o-mini",
