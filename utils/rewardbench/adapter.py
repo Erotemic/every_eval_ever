@@ -29,10 +29,7 @@ from every_eval_ever.eval_types import (
     SourceMetadata,
 )
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from helpers import (
+from every_eval_ever.helpers import (
     fetch_csv,
     fetch_json,
     get_developer,
