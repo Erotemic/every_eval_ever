@@ -6,13 +6,15 @@ on:
     paths:
       - 'every_eval_ever/validate.py'
       - 'every_eval_ever/check_duplicate_entries.py'
-      - 'eval.schema.json'
+      - 'every_eval_ever/schemas/eval.schema.json'
+      - 'every_eval_ever/schemas/instance_level_eval.schema.json'
       - 'data/**'
   pull_request:
     paths:
       - 'every_eval_ever/validate.py'
       - 'every_eval_ever/check_duplicate_entries.py'
-      - 'eval.schema.json'
+      - 'every_eval_ever/schemas/eval.schema.json'
+      - 'every_eval_ever/schemas/instance_level_eval.schema.json'
       - 'data/**'
 
 jobs:
