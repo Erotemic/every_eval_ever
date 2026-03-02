@@ -143,43 +143,137 @@ def _cmd_convert_helm(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="every_eval_ever")
+    parser = argparse.ArgumentParser(
+        prog="every_eval_ever",
+        description=(
+            "CLI for validating and converting evaluation results into the "
+            "Every Eval Ever schema."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  every_eval_ever validate data --schema aggregate\n"
+            "  every_eval_ever check-duplicates data\n"
+            "  every_eval_ever convert lm_eval eee --log-path results.json --output-dir data\n"
+            "  every_eval_ever convert inspect eee --log-path inspect_log.json --output-dir data\n"
+            "  every_eval_ever convert helm eee --log-path helm_run_dir --output-dir data"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    validate_parser = subparsers.add_parser("validate", help="Validate JSON files against schema")
-    validate_parser.add_argument("paths", nargs="+", help="File or directory paths")
-    validate_parser.add_argument("--schema-path", default=None)
-    validate_parser.add_argument("--schema", choices=["aggregate", "instance"], default="aggregate")
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate JSON files against schema",
+        description="Validate one or more JSON files/directories against the bundled schema.",
+    )
+    validate_parser.add_argument(
+        "paths",
+        nargs="+",
+        help="One or more JSON files or directories containing JSON files.",
+    )
+    validate_parser.add_argument(
+        "--schema-path",
+        default=None,
+        help="Optional explicit path to a JSON Schema file. Overrides --schema.",
+    )
+    validate_parser.add_argument(
+        "--schema",
+        choices=["aggregate", "instance"],
+        default="aggregate",
+        help="Which bundled schema to use when --schema-path is not provided.",
+    )
 
     check_duplicates_parser = subparsers.add_parser(
         "check-duplicates",
         help="Detect duplicate evaluation JSON entries",
+        description=(
+            "Detect duplicate evaluation entries while ignoring scrape-specific "
+            "keys (evaluation_id and retrieved_timestamp)."
+        ),
     )
-    check_duplicates_parser.add_argument("paths", nargs="+", help="File or directory paths")
+    check_duplicates_parser.add_argument(
+        "paths",
+        nargs="+",
+        help="One or more JSON files or directories containing JSON files.",
+    )
 
-    convert_parser = subparsers.add_parser("convert", help="Convert source eval logs to every_eval_ever")
+    convert_parser = subparsers.add_parser(
+        "convert",
+        help="Convert source eval logs to every_eval_ever",
+        description="Convert outputs from supported eval frameworks into Every Eval Ever JSON.",
+    )
     convert_subparsers = convert_parser.add_subparsers(dest="source", required=True)
 
     for source in ["lm_eval", "inspect", "helm"]:
-        source_parser = convert_subparsers.add_parser(source)
-        source_parser.add_argument("dst", nargs="?", default="eee")
-        source_parser.add_argument("--log-path", required=True)
-        source_parser.add_argument("--output-dir", default="data")
-        source_parser.add_argument("--source-organization-name", default="unknown")
+        source_parser = convert_subparsers.add_parser(
+            source,
+            help=f"Convert {source} logs",
+            description=f"Convert {source} evaluation outputs to Every Eval Ever format.",
+        )
+        source_parser.add_argument(
+            "dst",
+            nargs="?",
+            default="eee",
+            help="Destination schema family. Only 'eee' is currently supported.",
+        )
+        source_parser.add_argument(
+            "--log-path",
+            required=True,
+            help="Path to source log file or directory to convert.",
+        )
+        source_parser.add_argument(
+            "--output-dir",
+            default="data",
+            help="Base output directory where converted files are written.",
+        )
+        source_parser.add_argument(
+            "--source-organization-name",
+            default="unknown",
+            help="Organization name for source_metadata.source_organization_name.",
+        )
         source_parser.add_argument(
             "--evaluator-relationship",
             default="third_party",
             choices=EVALUATOR_RELATIONSHIP_CHOICES,
+            help="Relationship between evaluator and model developer.",
         )
-        source_parser.add_argument("--source-organization-url", default=None)
-        source_parser.add_argument("--source-organization-logo-url", default=None)
-        source_parser.add_argument("--eval-library-name", default=source)
-        source_parser.add_argument("--eval-library-version", default="unknown")
+        source_parser.add_argument(
+            "--source-organization-url",
+            default=None,
+            help="Optional organization URL for source metadata.",
+        )
+        source_parser.add_argument(
+            "--source-organization-logo-url",
+            default=None,
+            help="Optional organization logo URL for source metadata.",
+        )
+        source_parser.add_argument(
+            "--eval-library-name",
+            default=source,
+            help="Evaluation library name recorded in eval_library.name.",
+        )
+        source_parser.add_argument(
+            "--eval-library-version",
+            default="unknown",
+            help="Evaluation library version recorded in eval_library.version.",
+        )
 
         if source == "lm_eval":
-            source_parser.add_argument("--include-samples", action="store_true")
-            source_parser.add_argument("--inference-engine", default=None)
-            source_parser.add_argument("--inference-engine-version", default=None)
+            source_parser.add_argument(
+                "--include-samples",
+                action="store_true",
+                help="Also convert lm-eval sample JSONL into instance-level output.",
+            )
+            source_parser.add_argument(
+                "--inference-engine",
+                default=None,
+                help="Override inferred inference engine (e.g. vllm, transformers).",
+            )
+            source_parser.add_argument(
+                "--inference-engine-version",
+                default=None,
+                help="Inference engine version to record in model_info.inference_engine.version.",
+            )
 
     return parser
 
