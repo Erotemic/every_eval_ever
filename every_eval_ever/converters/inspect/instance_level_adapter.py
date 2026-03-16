@@ -50,6 +50,22 @@ class InspectInstanceLevelDataAdapter:
         self.evaluation_dir = evaluation_dir
         self.path = f'{evaluation_dir}/{evaulation_id}.{format}'
 
+    def _serialize_input(self, raw_input) -> str:
+        if isinstance(raw_input, str):
+            return raw_input
+        parts = []
+        for msg in raw_input:
+            if not isinstance(msg, ChatMessageUser):
+                continue
+            content = getattr(msg, "content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    block.text if hasattr(block, "text") else str(block)
+                    for block in content
+                )
+            parts.append(content)
+        return "\n".join(parts)
+
     def _parse_content_with_reasoning(
         self,
         content: List[Any]
@@ -61,7 +77,7 @@ class InspectInstanceLevelDataAdapter:
                 reasoning_trace = part.reasoning # or part.summary
             elif part.type and part.type == "text":
                 response = part.text
-        
+
         return response, reasoning_trace
 
 
@@ -85,7 +101,7 @@ class InspectInstanceLevelDataAdapter:
         reasoning = None
         if isinstance(content, List):
             content, reasoning = self._parse_content_with_reasoning(content)
-        
+
         tool_calls: List[ToolCall] = []
         tool_call_id = None
 
@@ -94,11 +110,11 @@ class InspectInstanceLevelDataAdapter:
                 ToolCall(
                     id=tool_call.id,
                     name=tool_call.function,
-                    arguments={str(k): str(v) for k, v in tool_call.arguments.items()} if tool_call.arguments else None
+                    arguments={str(k): json.dumps(v) for k, v in tool_call.arguments.items()} if tool_call.arguments else None
                 )
                 for tool_call in message.tool_calls or []
             ]
-            
+
         if isinstance(message, ChatMessageUser) or isinstance(message, ChatMessageTool):
             tool_call_id = [message.tool_call_id] if isinstance(message.tool_call_id, str) else message.tool_call_id
 
@@ -126,11 +142,11 @@ class InspectInstanceLevelDataAdapter:
                     ensure_ascii=False
                 )
                 f.write(json_line + "\n")
-        
+
         print(f'Instance-level eval log was successfully saved to {self.path} path.')
 
     def convert_instance_level_logs(
-        self, 
+        self,
         evaluation_name: str,
         model_id: str,
         samples: List[EvalSample]
@@ -139,7 +155,7 @@ class InspectInstanceLevelDataAdapter:
 
         for sample in samples:
             sample_input = Input(
-                raw=sample.input,
+                raw=self._serialize_input(sample.input),
                 reference=[sample.target] if isinstance(sample.target, str) else list(sample.target),
                 choices=sample.choices
             )

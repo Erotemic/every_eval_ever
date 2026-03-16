@@ -5,7 +5,6 @@
 **Every Eval Ever** is a shared schema and crowdsourced eval database. It defines a standardized metadata format for storing AI evaluation results — from leaderboard scrapes and research papers to local evaluation runs — so that results from different frameworks can be compared, reproduced, and reused. The three components that make it work:
 
 - 📋 **A metadata schema** ([`eval.schema.json`](every_eval_ever/schemas/eval.schema.json)) that defines the information needed for meaningful comparison of evaluation results, including [instance-level data](every_eval_ever/schemas/instance_level_eval.schema.json)
-- 🔧 **Validation** that checks data against the schema before it enters the repository
 - 🔌 **Converters** for [Inspect AI](every_eval_ever/converters/inspect/), [HELM](every_eval_ever/converters/helm/), and [lm-eval-harness](every_eval_ever/converters/lm_eval/), so you can transform your existing evaluation logs into the standard format
 
 Install the package:
@@ -38,7 +37,7 @@ Leaderboard/evaluation data is split-up into files by individual model, and data
 ### TL;DR How to successfully submit
 
 1. Data must conform to [`eval.schema.json`](every_eval_ever/schemas/eval.schema.json) (current version: `0.2.0`)
-2. Validation runs automatically on every PR via [`every_eval_ever validate`](every_eval_ever/validate.py)
+2. Convert local eval logs with [`every_eval_ever convert`](every_eval_ever/cli.py) when using a supported framework
 3. An EvalEval member will review and merge your submission
 
 ### PR Naming Convention
@@ -71,7 +70,7 @@ Note: Each file can contain multiple individual results related to one model. Se
 2. For each model, use the Hugging Face (`developer_name/model_name`) naming convention to create a 2-tier folder structure.
 3. Add a JSON file with results for each model and name it `{uuid}.json`.
 4. [Optional] Include a [`utils/`](utils/) folder in your benchmark name folder with any scripts used to generate the data (see e.g. [`utils/global-mmlu-lite/adapter.py`](utils/global-mmlu-lite/adapter.py)).
-5. [Validate] Validation runs automatically via [`validate-data.yml`](.github/workflows/validate-data.yml) using [`every_eval_ever validate`](every_eval_ever/validate.py) to check JSON files against the schema before merging.
+5. [Optional] Use [`every_eval_ever convert`](every_eval_ever/cli.py) if you're starting from supported local eval logs rather than hand-authored JSON.
 6. [Submit] Two ways to submit your evaluation data:
    - **Option A: Drag & drop via Hugging Face** — Go to [evaleval/EEE_datastore](https://huggingface.co/datasets/evaleval/EEE_datastore) → click "Files and versions" → "Contribute" → "Upload files" → drag and drop your data → select "Open as a pull request to the main branch". See [step-by-step screenshots](https://docs.google.com/document/d/1dxTQF8ncGCzaAOIj0RX7E9Hg4THmUBzezDOYUp_XdCY/edit?usp=sharing).
    - **Option B: Clone & PR** — Clone the [Hugging Face repository](https://huggingface.co/datasets/evaleval/EEE_datastore), add your data under `data/`, and open a pull request
@@ -279,21 +278,9 @@ We have prepared converters to make adapting to our schema as easy as possible. 
 
 | Framework | Command | Instance-Level JSONL |
 |---|---|---|
-| [Inspect AI](every_eval_ever/converters/inspect/) | `every_eval_ever convert inspect eee --log-path <path>` | Yes, if samples in log |
-| [HELM](every_eval_ever/converters/helm/) | `every_eval_ever convert helm eee --log-path <path>` | Always |
-| [lm-evaluation-harness](every_eval_ever/converters/lm_eval/) | `every_eval_ever convert lm_eval eee --log-path <path> --include-samples` | With `--include-samples` |
-
-Validation command:
-
-```bash
-every_eval_ever validate <path-or-dir>
-```
-
-Duplicate check command:
-
-```bash
-every_eval_ever check-duplicates <path-or-dir>
-```
+| [Inspect AI](every_eval_ever/converters/inspect/) | `every_eval_ever convert inspect --log_path <path>` | Yes, if samples in log |
+| [HELM](every_eval_ever/converters/helm/) | `every_eval_ever convert helm --log_path <path>` | Always |
+| [lm-evaluation-harness](every_eval_ever/converters/lm_eval/) | `every_eval_ever convert lm_eval --log_path <path> --include_samples` | With `--include_samples` |
 
 For full CLI usage and required input files, see the [Eval Converters README](every_eval_ever/converters/README.md).
 

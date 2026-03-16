@@ -1,5 +1,7 @@
 import json
 import os
+import uuid
+import logging
 
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
@@ -84,6 +86,9 @@ from every_eval_ever.converters.inspect.utils import (
 )
 from every_eval_ever.converters import SCHEMA_VERSION
 
+logger = logging.getLogger(__name__)
+
+
 class InspectAIAdapter(BaseEvaluationAdapter):
     """
     Adapter for transforming evaluation outputs from the Inspect AI library into the unified schema format.
@@ -121,6 +126,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
 
     def _build_evaluation_result(
         self,
+        evaluation_task_name: str,
         scorer_name: str,
         metric_info: EvalMetric,
         llm_grader: LlmScoring,
@@ -132,7 +138,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
         num_samples: int = 0
     ) -> EvaluationResult:
         return EvaluationResult(
-            evaluation_name=scorer_name,
+            evaluation_name=f"{evaluation_task_name} - {scorer_name}",
             source_data=source_data,
             evaluation_timestamp=evaluation_timestamp,
             metric_config=MetricConfig(
@@ -156,6 +162,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
 
     def _extract_evaluation_results(
         self,
+        evaluation_task_name: str,
         scores: List[EvalScore],
         source_data: SourceDataHf,
         generation_config: Dict[str, Any],
@@ -196,6 +203,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
                 
                 results.append(
                     self._build_evaluation_result(
+                        evaluation_task_name=evaluation_task_name,
                         scorer_name=scorer_name,
                         metric_info=metric_info,
                         llm_grader=llm_grader,
@@ -259,7 +267,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
                 name=self._safe_get(tool, 'name'),
                 description=self._safe_get(tool, 'description'),
                 parameters=(
-                    {str(k): str(v) for k, v in raw_params.items()}
+                    {str(k): json.dumps(v) for k, v in raw_params.items()}
                     if (raw_params := self._safe_get(tool, 'params')) and isinstance(raw_params, dict)
                     else None
                 ),
@@ -286,7 +294,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
     ) -> GenerationConfig:
         eval_config = spec.model_generate_config
         eval_generation_config = {
-            gen_config: str(value) 
+            gen_config: json.dumps(value) 
             for gen_config, value in vars(eval_config).items() if value is not None
         }
         eval_sandbox = spec.task_args.get("sandbox", None)
@@ -300,7 +308,7 @@ class InspectAIAdapter(BaseEvaluationAdapter):
                 json.dumps(step.model_dump() if hasattr(step, 'model_dump') else vars(step))
                 for step in inspect_plan.steps
             ],
-            config={k: str(v) for k, v in inspect_plan.config.model_dump().items() if v is not None},
+            config={str(k): json.dumps(v) for k, v in inspect_plan.config.model_dump().items() if v is not None},
         )
 
         eval_limits = EvalLimits(
@@ -372,8 +380,23 @@ class InspectAIAdapter(BaseEvaluationAdapter):
             raise FileNotFoundError(f"Directory path {dir_path} does not exist!")
         
         log_paths: List[Path] = list_eval_logs(dir_path.absolute().as_posix())
+        file_uuids = metadata_args.get("file_uuids")
         try:
-            return [self.transform_from_file(urlparse(log_path.name).path, metadata_args) for log_path in log_paths]
+            transformed_logs: List[EvaluationLog] = []
+            for idx, log_path in enumerate(log_paths):
+                # In directory mode, each converted log must get its own UUID.
+                per_log_metadata_args = dict(metadata_args)
+                file_uuid = None
+                if isinstance(file_uuids, list) and idx < len(file_uuids):
+                    file_uuid = file_uuids[idx]
+                per_log_metadata_args["file_uuid"] = file_uuid or str(uuid.uuid4())
+                transformed_logs.append(
+                    self.transform_from_file(
+                        urlparse(log_path.name).path,
+                        per_log_metadata_args,
+                    )
+                )
+            return transformed_logs
         except Exception as e:
             raise AdapterError(f"Failed to load file from directory {dir_path}: {str(e)} for InspectAIAdapter")
 
@@ -471,8 +494,11 @@ class InspectAIAdapter(BaseEvaluationAdapter):
 
         results: EvalResults | None = raw_eval_log.results
 
+        evaluation_task_name = eval_spec.task_display_name or eval_spec.task
+
         evaluation_results = (
             self._extract_evaluation_results(
+                evaluation_task_name,
                 results.scores if results else [],
                 source_data,
                 generation_config,
@@ -485,10 +511,17 @@ class InspectAIAdapter(BaseEvaluationAdapter):
 
         evaluation_id = f'{source_data.dataset_name}/{model_path.replace('/', '_')}/{evaluation_unix_timestamp}'
 
-        evaluation_name = eval_spec.dataset.name or eval_spec.task
-
         parent_eval_output_dir = metadata_args.get("parent_eval_output_dir", "data")
         if raw_eval_log.samples and parent_eval_output_dir:
+            file_uuid = metadata_args.get("file_uuid")
+            if not file_uuid:
+                file_uuid = str(uuid.uuid4())
+                metadata_args["file_uuid"] = file_uuid
+                logging.warning(
+                    f"Missing metadata_args['file_uuid']; generated one for instance-level log: {file_uuid}. "
+                    "Save unified aggregate log with the same uuid."
+                )
+
             if "/" in model_info.id:
                 model_dev, model_name = model_info.id.split("/", 1)
             else:
@@ -496,13 +529,12 @@ class InspectAIAdapter(BaseEvaluationAdapter):
             evaluation_dir = (
                 f"{parent_eval_output_dir}/{source_data.dataset_name}/{model_dev}/{model_name}"
             )
-            file_uuid = metadata_args.get("file_uuid") or "none"
             detailed_results_id = f"{file_uuid}_samples"
 
             instance_level_log_path, instance_level_rows_number = InspectInstanceLevelDataAdapter(
                 detailed_results_id, Format.jsonl.value, HashAlgorithm.sha256.value, evaluation_dir
             ).convert_instance_level_logs(
-                evaluation_name, model_info.id, raw_eval_log.samples
+                evaluation_task_name, model_info.id, raw_eval_log.samples
             )
 
             detailed_evaluation_results = DetailedEvaluationResults(

@@ -151,11 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Examples:\n"
-            "  every_eval_ever validate data --schema aggregate\n"
-            "  every_eval_ever check-duplicates data\n"
-            "  every_eval_ever convert lm_eval eee --log-path results.json --output-dir data\n"
-            "  every_eval_ever convert inspect eee --log-path inspect_log.json --output-dir data\n"
-            "  every_eval_ever convert helm eee --log-path helm_run_dir --output-dir data"
+            "  every_eval_ever convert lm_eval --log_path results.json --output_dir data\n"
+            "  every_eval_ever convert inspect --log_path inspect_log.json --output_dir data\n"
+            "  every_eval_ever convert helm --log_path helm_run_dir --output_dir data"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -211,48 +209,50 @@ def build_parser() -> argparse.ArgumentParser:
             description=f"Convert {source} evaluation outputs to Every Eval Ever format.",
         )
         source_parser.add_argument(
-            "dst",
-            nargs="?",
-            default="eee",
-            help="Destination schema family. Only 'eee' is currently supported.",
-        )
-        source_parser.add_argument(
+            "--log_path",
             "--log-path",
             required=True,
             help="Path to source log file or directory to convert.",
         )
         source_parser.add_argument(
+            "--output_dir",
             "--output-dir",
             default="data",
             help="Base output directory where converted files are written.",
         )
         source_parser.add_argument(
+            "--source_organization_name",
             "--source-organization-name",
             default="unknown",
             help="Organization name for source_metadata.source_organization_name.",
         )
         source_parser.add_argument(
+            "--evaluator_relationship",
             "--evaluator-relationship",
             default="third_party",
             choices=EVALUATOR_RELATIONSHIP_CHOICES,
             help="Relationship between evaluator and model developer.",
         )
         source_parser.add_argument(
+            "--source_organization_url",
             "--source-organization-url",
             default=None,
             help="Optional organization URL for source metadata.",
         )
         source_parser.add_argument(
+            "--source_organization_logo_url",
             "--source-organization-logo-url",
             default=None,
             help="Optional organization logo URL for source metadata.",
         )
         source_parser.add_argument(
+            "--eval_library_name",
             "--eval-library-name",
             default=source,
             help="Evaluation library name recorded in eval_library.name.",
         )
         source_parser.add_argument(
+            "--eval_library_version",
             "--eval-library-version",
             default="unknown",
             help="Evaluation library version recorded in eval_library.version.",
@@ -260,16 +260,19 @@ def build_parser() -> argparse.ArgumentParser:
 
         if source == "lm_eval":
             source_parser.add_argument(
+                "--include_samples",
                 "--include-samples",
                 action="store_true",
                 help="Also convert lm-eval sample JSONL into instance-level output.",
             )
             source_parser.add_argument(
+                "--inference_engine",
                 "--inference-engine",
                 default=None,
                 help="Override inferred inference engine (e.g. vllm, transformers).",
             )
             source_parser.add_argument(
+                "--inference_engine_version",
                 "--inference-engine-version",
                 default=None,
                 help="Inference engine version to record in model_info.inference_engine.version.",
@@ -300,9 +303,6 @@ def main(argv: list[str] | None = None) -> int:
         return check_duplicates_main(args.paths)
 
     if args.command == "convert":
-        if getattr(args, "dst", "eee") != "eee":
-            raise ValueError("Only destination 'eee' is currently supported")
-
         if args.source == "lm_eval":
             return _cmd_convert_lm_eval(args)
         if args.source == "inspect":
