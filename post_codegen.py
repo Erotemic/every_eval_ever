@@ -70,6 +70,17 @@ PATCHES = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Discriminator patch for source_data union in EvaluationResult
+# ---------------------------------------------------------------------------
+
+DISCRIMINATOR_PATCH = {
+    "file": "eval_types.py",
+    "target_line": "    source_data: SourceDataUrl | SourceDataHf | SourceDataPrivate = Field(",
+    "replacement": '    source_data: Annotated[SourceDataUrl | SourceDataHf | SourceDataPrivate, Discriminator("source_type")] = Field(',
+    "imports": ["Annotated", "Discriminator"],
+}
+
 
 def add_import(content: str, symbol: str) -> str:
     """Add a symbol to the pydantic import line if not already present."""
@@ -123,10 +134,45 @@ def patch_file(patch: dict) -> None:
     print(f"  {patch['file']}: patched {patch['class_name']}")
 
 
+def apply_discriminator_patch(patch: dict) -> None:
+    """Add Discriminator annotation to a union field for better error messages."""
+    path = Path(__file__).parent / patch["file"]
+    content = path.read_text()
+
+    if "Discriminator" in content:
+        print(f"  {patch['file']}: discriminator already patched, skipping")
+        return
+
+    # Add imports
+    for symbol in patch["imports"]:
+        if symbol == "Annotated":
+            if "from typing import" in content:
+                if "Annotated" not in content:
+                    content = content.replace(
+                        "from typing import ",
+                        "from typing import Annotated, ",
+                    )
+            else:
+                # Add typing import after pydantic import
+                content = content.replace(
+                    "from pydantic import ",
+                    "from typing import Annotated\nfrom pydantic import ",
+                )
+        elif symbol == "Discriminator":
+            content = add_import(content, "Discriminator")
+
+    # Replace the target line
+    content = content.replace(patch["target_line"], patch["replacement"])
+
+    path.write_text(content)
+    print(f"  {patch['file']}: patched source_data with Discriminator")
+
+
 def main():
     print("Applying post-codegen patches...")
     for patch in PATCHES:
         patch_file(patch)
+    apply_discriminator_patch(DISCRIMINATOR_PATCH)
     print("Done.")
 
 

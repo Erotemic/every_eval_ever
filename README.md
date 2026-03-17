@@ -144,27 +144,66 @@ At the instance level, agentic evaluations use `interaction_type: "agentic"` wit
 
 ## ✅ Data Validation
 
-This repository has a pre-commit that will validate that JSON files conform to the JSON schema. The pre-commit requires using [uv](https://docs.astral.sh/uv/) for dependency management.
+Validation uses Pydantic models generated from the JSON schemas. This enforces both structural constraints and custom validators (e.g. `score_type: "levels"` requires `level_names`). Requires [uv](https://docs.astral.sh/uv/).
 
-To run the pre-commit on git staged files only:
+### Validate files with `validate.py`
+
+Validate aggregate `.json` and instance-level `.jsonl` files:
 
 ```sh
+# Single file
+uv run python validate.py data/benchmark/dev/model/uuid.json
+
+# Instance-level JSONL
+uv run python validate.py data/benchmark/dev/model/uuid.jsonl
+
+# Entire directory (recurses into subdirectories)
+uv run python validate.py data/benchmark/dev/model/
+
+# Multiple paths
+uv run python validate.py file1.json file2.jsonl data/
+```
+
+File type is determined by extension: `.json` validates against `EvaluationLog`, `.jsonl` validates each line against `InstanceLevelEvaluationLog`.
+
+#### Output formats
+
+```sh
+# Rich terminal output (default) — colored panels with field paths
+uv run python validate.py data/
+
+# Machine-readable JSON
+uv run python validate.py --format json data/
+
+# GitHub Actions annotations (::error file=...)
+uv run python validate.py --format github data/
+```
+
+#### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format {rich,json,github}` | `rich` | Output format |
+| `--max-errors N` | `50` | Maximum errors reported per JSONL file |
+
+Exit code is `0` if all files pass, `1` if any fail.
+
+### Pre-commit hooks
+
+The repository also has a pre-commit hook for validation. To run it:
+
+```sh
+# Staged files only
 uv run pre-commit run
-```
 
-To run the pre-commit on all files:
-
-```sh
+# All files
 uv run pre-commit run --all-files
-```
 
-To run the pre-commit on specific files:
-
-```sh
+# Specific files
 uv run pre-commit run --files a.json b.json c.json
 ```
 
-To install the pre-commit so that it will run before `git commit` (optional):
+To install the pre-commit so that it runs before `git commit` (optional):
 
 ```sh
 uv run pre-commit install
