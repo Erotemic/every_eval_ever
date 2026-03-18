@@ -6,7 +6,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
-from eval_converters.helm.adapter import HELMAdapter
+try:
+    from eval_converters.helm.adapter import HELMAdapter
+except ImportError as exc:
+    raise SystemExit(
+        "The 'crfm-helm' package is required to use the HELM converter.\n"
+        "Install it with: uv sync --extra helm"
+    ) from exc
+
 from eval_types import (
     EvaluatorRelationship,
     EvaluationLog

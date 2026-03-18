@@ -2,10 +2,14 @@
 A collection of scripts to convert evaluation logs from local runs from evaluation frameworks (e.g., `Inspect AI` and `lm-eval-harness`). 
 
 ### Installation
-- Install the required dependencies:
+
+Install dependencies for the converter(s) you need:
 
 ```bash
-uv sync
+uv sync                   # core dependencies only (includes lm-eval)
+uv sync --extra inspect   # + Inspect AI
+uv sync --extra helm      # + HELM
+uv sync --extra all       # + all
 ```
 
 ### Inspect
