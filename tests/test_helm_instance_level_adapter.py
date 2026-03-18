@@ -1,3 +1,6 @@
+import pytest
+pytest.importorskip("helm", reason="crfm-helm not installed; install with: uv sync --extra helm")
+
 import json
 import tempfile
 from pathlib import Path

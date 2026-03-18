@@ -1,3 +1,6 @@
+import pytest
+pytest.importorskip("inspect_ai", reason="inspect-ai not installed; install with: uv sync --extra inspect")
+
 import json
 import tempfile
 from pathlib import Path

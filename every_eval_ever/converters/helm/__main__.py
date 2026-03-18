@@ -6,11 +6,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
-from every_eval_ever.converters.helm.adapter import HELMAdapter
-from every_eval_ever.eval_types import (
-    EvaluatorRelationship,
-    EvaluationLog
-)
+try:
+    from every_eval_ever.converters.helm.adapter import HELMAdapter
+except ImportError as exc:
+    raise SystemExit(
+        "The 'crfm-helm' package is required to use the HELM converter.\n"
+        "Install it with: uv sync --extra helm"
+    ) from exc
+
+from every_eval_ever.eval_types import EvaluatorRelationship, EvaluationLog
 
 def parse_args():
     parser = ArgumentParser()
