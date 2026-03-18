@@ -1,0 +1,57 @@
+name: Regenerate Pydantic types
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "eval.schema.json"
+      - "instance_level_eval.schema.json"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: astral-sh/setup-uv@v7.6.0
+
+      - name: Install dependencies
+        run: uv sync --locked --project .github/ci-types
+
+      - name: Regenerate types and run checks
+        run: |
+          uv run --project .github/ci-types datamodel-codegen \
+            --input eval.schema.json \
+            --output eval_types.py \
+            --class-name EvaluationLog \
+            --output-model-type pydantic_v2.BaseModel \
+            --input-file-type jsonschema \
+            --formatters ruff-format ruff-check
+          uv run --project .github/ci-types datamodel-codegen \
+            --input instance_level_eval.schema.json \
+            --output instance_level_types.py \
+            --class-name InstanceLevelEvaluationLog \
+            --output-model-type pydantic_v2.BaseModel \
+            --input-file-type jsonschema \
+            --formatters ruff-format ruff-check
+          uv run --project .github/ci-types python post_codegen.py
+          PYTHONPATH="${{ github.workspace }}" uv run --project .github/ci-types pytest \
+            tests/test_validate.py \
+            tests/test_check_duplicate_entries.py
+      
+      - name: Create or update PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: |
+            eval_types.py
+            instance_level_types.py
+          base: main
+          branch: auto/regenerate-types
+          commit-message: "chore: regenerate Pydantic types from updated schema"
+          title: "chore: regenerate Pydantic types"
+          body: "Auto-generated from schema changes in `eval.schema.json` and/or `instance_level_eval.schema.json`."
+          author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <github-actions[bot]@users.noreply.github.com>

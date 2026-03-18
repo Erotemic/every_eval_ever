@@ -1,6 +1,6 @@
 [project]
 name = "every-eval-ever"
-version = "0.1.0"
+version = "0.2.2"
 description = "Every Eval Ever"
 readme = "README.md"
 authors = [
@@ -13,6 +13,7 @@ dependencies = [
     "jsonschema>=4.26.0,<5.0.0",
     "pydantic>=2.12.5,<3.0.0",
     "requests>=2.32.5,<3.0.0",
+    "rich>=14.0.0,<15.0.0",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +27,6 @@ all = [
 [dependency-groups]
 dev = [
     "datamodel-code-generator>=0.43.1",
-    "pre-commit>=4.3.0",
-    "pytest>=9.0.2",
+"pytest>=9.0.2",
     "ruff>=0.12.2",
 ]
