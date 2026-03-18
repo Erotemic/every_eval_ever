@@ -139,7 +139,8 @@ def apply_discriminator_patch(patch: dict) -> None:
     path = Path(__file__).parent / patch["file"]
     content = path.read_text()
 
-    if "Discriminator" in content:
+    # Check if the specific replacement has already been applied
+    if patch.get("replacement") and patch["replacement"] in content:
         print(f"  {patch['file']}: discriminator already patched, skipping")
         return
 

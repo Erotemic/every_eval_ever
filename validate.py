@@ -152,6 +152,22 @@ def validate_instance_file(
 
             if line_errors:
                 report.valid = False
+
+                # Respect max_errors by truncating line_errors to the remaining budget
+                remaining = max_errors - len(report.errors)
+                if remaining <= 0:
+                    report.errors.append(
+                        {
+                            "loc": "(truncated)",
+                            "msg": f"Error limit reached ({max_errors}). Use --max-errors to increase.",
+                            "type": "truncated",
+                        }
+                    )
+                    break
+
+                if len(line_errors) > remaining:
+                    line_errors = line_errors[:remaining]
+
                 report.errors.extend(line_errors)
 
                 if len(report.errors) >= max_errors:
@@ -176,7 +192,7 @@ def validate_file(
     elif file_path.suffix == ".jsonl":
         return validate_instance_file(file_path, max_errors)
     else:
-        report = ValidationReport(file_path=file_path, valid=False)
+        report = ValidationReport(file_path=file_path, valid=False, file_type="unsupported")
         report.errors.append(
             {
                 "loc": "(file)",
