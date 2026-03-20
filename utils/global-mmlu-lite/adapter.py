@@ -26,6 +26,7 @@ from every_eval_ever.eval_types import (
 )
 
 from every_eval_ever.helpers import (
+    SCHEMA_VERSION,
     fetch_json,
     get_developer,
     make_source_metadata,
@@ -35,7 +36,9 @@ from every_eval_ever.helpers import (
 
 
 # Data source URL
-KAGGLE_API_URL = "https://www.kaggle.com/api/v1/benchmarks/cohere-labs/global-mmlu-lite/leaderboard"
+KAGGLE_API_URL = (
+    "https://www.kaggle.com/api/v1/benchmarks/cohere-labs/global-mmlu-lite/leaderboard"
+)
 
 OUTPUT_DIR = "data/global-mmlu-lite"
 
@@ -133,7 +136,9 @@ def fetch_global_mmlu_lite(retrieved_timestamp: str) -> int:
             confidence_interval = None
 
             if result_data.get("hasNumericResult"):
-                numeric_result = result_data.get("numericResult") or result_data.get("numericResultNullable", {})
+                numeric_result = result_data.get("numericResult") or result_data.get(
+                    "numericResultNullable", {}
+                )
                 score_value = numeric_result.get("value")
 
                 if numeric_result.get("hasConfidenceInterval"):
@@ -158,13 +163,17 @@ def fetch_global_mmlu_lite(retrieved_timestamp: str) -> int:
         model_info = make_model_info(
             model_name=model_name,
             developer=developer,
-            additional_details={"display_name": model_display_name} if model_display_name and model_display_name != model_name else None,
+            additional_details={"display_name": model_display_name}
+            if model_display_name and model_display_name != model_name
+            else None,
         )
 
         # Build evaluation log
-        evaluation_id = f"global-mmlu-lite/{model_info.id.replace('/', '_')}/{retrieved_timestamp}"
+        evaluation_id = (
+            f"global-mmlu-lite/{model_info.id.replace('/', '_')}/{retrieved_timestamp}"
+        )
         eval_log = EvaluationLog(
-            schema_version="0.2.1",
+            schema_version=SCHEMA_VERSION,
             evaluation_id=evaluation_id,
             retrieved_timestamp=retrieved_timestamp,
             source_metadata=make_source_metadata(
@@ -173,7 +182,13 @@ def fetch_global_mmlu_lite(retrieved_timestamp: str) -> int:
                 organization_url="www.kaggle.com",
                 evaluator_relationship=EvaluatorRelationship.third_party,
             ),
-            eval_library=EvalLibrary(name="unknown", version="unknown"),
+            eval_library=EvalLibrary(
+                name="kaggle kernel",
+                version="4",
+                additional_details={
+                    "url": "https://www.kaggle.com/code/shivalikasingh95/global-mmlu-lite-sample-notebook"
+                },
+            ),
             model_info=model_info,
             evaluation_results=eval_results,
         )
@@ -206,6 +221,7 @@ def main():
     except Exception as e:
         print(f"Error processing Global MMLU Lite: {e}")
         import traceback
+
         traceback.print_exc()
 
     print("\n" + "=" * 60)
