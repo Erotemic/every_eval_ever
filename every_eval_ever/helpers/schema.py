@@ -5,6 +5,15 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+def _load_schema_version() -> str:
+    schema_path = Path(__file__).parent.parent.parent / "eval.schema.json"
+    with schema_path.open() as f:
+        return json.load(f)["version"]
+
+
+SCHEMA_VERSION = _load_schema_version()
+
 from every_eval_ever.eval_types import (
     EvaluationLog,
     EvaluationResult,

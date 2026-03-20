@@ -23,6 +23,7 @@ from every_eval_ever.eval_types import (
 )
 
 from every_eval_ever.helpers import (
+    SCHEMA_VERSION,
     fetch_json,
     get_developer,
     make_model_info,
