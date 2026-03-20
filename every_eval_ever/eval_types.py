@@ -3,17 +3,19 @@
 #   timestamp: 2026-03-19T20:30:15+00:00
 
 from __future__ import annotations
+
 from enum import Enum
+from typing import Annotated, Literal
+
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
     confloat,
     conint,
     model_validator,
-    Discriminator,
 )
-from typing import Annotated, Literal
 
 
 class SourceType(Enum):

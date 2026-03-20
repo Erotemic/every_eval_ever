@@ -28,7 +28,6 @@ from every_eval_ever.eval_types import (
     SourceDataHf,
     SourceMetadata,
 )
-
 from every_eval_ever.helpers import (
     fetch_csv,
     fetch_json,

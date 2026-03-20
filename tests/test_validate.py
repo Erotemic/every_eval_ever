@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 import json
-import textwrap
 from pathlib import Path
 
-import pytest
-
 from every_eval_ever.validate import (
-    ValidationReport,
     expand_paths,
+    render_report_github,
+    render_report_json,
     validate_aggregate,
     validate_file,
     validate_instance_file,
-    render_report_json,
-    render_report_github,
 )
 
 # ---------------------------------------------------------------------------

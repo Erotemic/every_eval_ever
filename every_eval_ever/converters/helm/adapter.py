@@ -1,22 +1,22 @@
+import datetime
 import json
 import os
-import datetime
-from typing import Any, Dict, List, Tuple
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 _HELM_IMPORT_ERROR: Exception | None = None
 try:
     from dacite import from_dict
-    from helm.benchmark.metrics.metric import PerInstanceStats
     from helm.benchmark.adaptation.scenario_state import (
         AdapterSpec,
         RequestState,
         ScenarioState,
     )
-    from helm.benchmark.metrics.statistic import Stat
     from helm.benchmark.config_registry import (
         register_builtin_configs_from_helm_package,
     )
+    from helm.benchmark.metrics.metric import PerInstanceStats
+    from helm.benchmark.metrics.statistic import Stat
     from helm.benchmark.model_deployment_registry import get_model_deployment
     from helm.benchmark.run_spec import RunSpec
     from helm.common.codec import from_json
@@ -32,38 +32,36 @@ except (
         from_json
     ) = None  # type: ignore[assignment]
 
-from every_eval_ever.eval_types import (
-    DetailedEvaluationResults,
-    EvalLibrary,
-    EvaluationLog,
-    EvaluationResult,
-    MetricConfig,
-    ModelInfo,
-    ScoreType,
-    ScoreDetails,
-    SourceMetadata,
-    SourceType,
-    SourceDataHf,
-    GenerationConfig,
-    GenerationArgs,
-    Format,
-    HashAlgorithm,
-    Uncertainty,
-)
-
-from every_eval_ever.instance_level_types import InstanceLevelEvaluationLog
-
+from every_eval_ever.converters import SCHEMA_VERSION
 from every_eval_ever.converters.common.adapter import (
     AdapterMetadata,
     BaseEvaluationAdapter,
     SupportedLibrary,
 )
 from every_eval_ever.converters.common.utils import sha256_file
-from every_eval_ever.converters.helm.utils import extract_reasoning
 from every_eval_ever.converters.helm.instance_level_adapter import (
     HELMInstanceLevelDataAdapter,
 )
-from every_eval_ever.converters import SCHEMA_VERSION
+from every_eval_ever.converters.helm.utils import extract_reasoning
+from every_eval_ever.eval_types import (
+    DetailedEvaluationResults,
+    EvalLibrary,
+    EvaluationLog,
+    EvaluationResult,
+    Format,
+    GenerationArgs,
+    GenerationConfig,
+    HashAlgorithm,
+    MetricConfig,
+    ModelInfo,
+    ScoreDetails,
+    ScoreType,
+    SourceDataHf,
+    SourceMetadata,
+    SourceType,
+    Uncertainty,
+)
+from every_eval_ever.instance_level_types import InstanceLevelEvaluationLog
 
 
 def _require_helm_dependencies() -> None:

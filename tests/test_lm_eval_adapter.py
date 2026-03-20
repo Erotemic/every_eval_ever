@@ -6,8 +6,8 @@ from every_eval_ever.converters.lm_eval.instance_level_adapter import (
     LMEvalInstanceLevelAdapter,
 )
 from every_eval_ever.converters.lm_eval.utils import (
-    parse_model_args,
     find_samples_file,
+    parse_model_args,
 )
 from every_eval_ever.eval_types import (
     EvaluationLog,

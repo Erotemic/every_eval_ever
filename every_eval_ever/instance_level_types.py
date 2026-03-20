@@ -3,7 +3,10 @@
 #   timestamp: 2026-03-19T20:30:15+00:00
 
 from __future__ import annotations
+
 from enum import Enum
+from typing import Any
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -12,7 +15,6 @@ from pydantic import (
     conint,
     model_validator,
 )
-from typing import Any
 
 
 class InteractionType(Enum):

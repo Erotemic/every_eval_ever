@@ -32,10 +32,10 @@ from every_eval_ever.eval_types import (
 )
 
 from .utils import (
-    parse_model_args,
+    KNOWN_METRIC_BOUNDS,
     MODEL_TYPE_TO_INFERENCE_ENGINE,
     MODEL_TYPE_TO_INFERENCE_PLATFORM,
-    KNOWN_METRIC_BOUNDS,
+    parse_model_args,
 )
 
 

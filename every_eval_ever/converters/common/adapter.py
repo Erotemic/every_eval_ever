@@ -3,9 +3,10 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from huggingface_hub import model_info
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Union
+
+from huggingface_hub import model_info
 
 from every_eval_ever.converters.common.error import (
     AdapterError,

@@ -31,7 +31,6 @@ from every_eval_ever.eval_types import (
     ScoreType,
     SourceDataUrl,
 )
-
 from every_eval_ever.helpers import (
     fetch_json,
     get_developer,

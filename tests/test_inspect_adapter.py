@@ -6,8 +6,8 @@ pytest.importorskip(
 )
 
 import contextlib
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 from every_eval_ever.converters.inspect.adapter import InspectAIAdapter
 from every_eval_ever.converters.inspect.utils import (

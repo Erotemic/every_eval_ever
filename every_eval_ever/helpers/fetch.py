@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-
 DEFAULT_TIMEOUT = 60  # seconds
 
 

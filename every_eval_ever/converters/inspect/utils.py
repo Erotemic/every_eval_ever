@@ -1,12 +1,11 @@
-import hashlib
 import re
-
 from pathlib import Path
-from pydantic import BaseModel
-from typing import Dict, Type, List
+from typing import Dict, List, Type
 
-from every_eval_ever.eval_types import InferenceEngine, ModelInfo
+from pydantic import BaseModel
+
 from every_eval_ever.converters.common.utils import get_model_organization_info
+from every_eval_ever.eval_types import InferenceEngine, ModelInfo
 
 
 class ModelPathHandler:

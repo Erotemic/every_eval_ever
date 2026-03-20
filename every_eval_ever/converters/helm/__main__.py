@@ -1,7 +1,8 @@
 from __future__ import annotations
-from argparse import ArgumentParser
-import uuid
+
 import json
+import uuid
+from argparse import ArgumentParser
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Union
@@ -14,7 +15,7 @@ except ImportError as exc:
         'Install it with: uv sync --extra helm'
     ) from exc
 
-from every_eval_ever.eval_types import EvaluatorRelationship, EvaluationLog
+from every_eval_ever.eval_types import EvaluationLog, EvaluatorRelationship
 
 
 def parse_args():

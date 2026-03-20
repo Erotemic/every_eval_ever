@@ -1,8 +1,7 @@
 import json
+import logging
 import os
 import uuid
-import logging
-
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 from urllib.parse import urlparse
@@ -17,8 +16,8 @@ try:
         EvalSample,
         EvalSampleSummary,
         EvalScore,
-        EvalStats,
         EvalSpec,
+        EvalStats,
         list_eval_logs,
         read_eval_log,
         read_eval_log_sample,
@@ -43,13 +42,31 @@ def _require_inspect_dependencies() -> None:
         ) from _INSPECT_IMPORT_ERROR
 
 
+from every_eval_ever.converters import SCHEMA_VERSION
+from every_eval_ever.converters.common.adapter import (
+    AdapterMetadata,
+    BaseEvaluationAdapter,
+    SupportedLibrary,
+)
+from every_eval_ever.converters.common.error import AdapterError
+from every_eval_ever.converters.common.utils import (
+    convert_timestamp_to_unix_format,
+    get_current_unix_timestamp,
+    sha256_file,
+)
+from every_eval_ever.converters.inspect.instance_level_adapter import (
+    InspectInstanceLevelDataAdapter,
+)
+from every_eval_ever.converters.inspect.utils import (
+    extract_model_info_from_model_path,
+)
 from every_eval_ever.eval_types import (
     AgenticEvalConfig,
     AvailableTool,
     DetailedEvaluationResults,
+    EvalLibrary,
     EvalLimits,
     EvalPlan,
-    EvalLibrary,
     EvaluationLog,
     EvaluationResult,
     EvaluatorRelationship,
@@ -58,38 +75,18 @@ from every_eval_ever.eval_types import (
     GenerationConfig,
     HashAlgorithm,
     JudgeConfig,
+    LlmScoring,
     MetricConfig,
     ModelInfo,
-    LlmScoring,
     Sandbox,
-    ScoreType,
     ScoreDetails,
+    ScoreType,
     SourceDataHf,
     SourceMetadata,
     SourceType,
     StandardError,
     Uncertainty,
 )
-
-from every_eval_ever.converters.common.adapter import (
-    AdapterMetadata,
-    BaseEvaluationAdapter,
-    SupportedLibrary,
-)
-
-from every_eval_ever.converters.common.error import AdapterError
-from every_eval_ever.converters.common.utils import (
-    convert_timestamp_to_unix_format,
-    get_current_unix_timestamp,
-)
-from every_eval_ever.converters.inspect.instance_level_adapter import (
-    InspectInstanceLevelDataAdapter,
-)
-from every_eval_ever.converters.common.utils import sha256_file
-from every_eval_ever.converters.inspect.utils import (
-    extract_model_info_from_model_path,
-)
-from every_eval_ever.converters import SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 

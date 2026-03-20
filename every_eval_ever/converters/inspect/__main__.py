@@ -1,14 +1,16 @@
 from __future__ import annotations
-from argparse import ArgumentParser
+
 import json
 import logging
 import uuid
+from argparse import ArgumentParser
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 
 try:
     from inspect_ai.log import list_eval_logs
+
     from every_eval_ever.converters.inspect.adapter import InspectAIAdapter
 except ImportError as exc:
     raise SystemExit(
@@ -16,7 +18,7 @@ except ImportError as exc:
         'Install it with: uv sync --extra inspect'
     ) from exc
 
-from every_eval_ever.eval_types import EvaluatorRelationship, EvaluationLog
+from every_eval_ever.eval_types import EvaluationLog, EvaluatorRelationship
 from every_eval_ever.instance_level_types import InstanceLevelEvaluationLog
 
 logger = logging.getLogger(__name__)

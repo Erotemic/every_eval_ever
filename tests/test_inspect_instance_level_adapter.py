@@ -9,16 +9,17 @@ import json
 import tempfile
 from pathlib import Path
 
+from inspect_ai.model import ChatMessageAssistant, ChatMessageUser, ContentText
+
 from every_eval_ever.converters.inspect.adapter import InspectAIAdapter
+from every_eval_ever.converters.inspect.instance_level_adapter import (
+    InspectInstanceLevelDataAdapter,
+)
 from every_eval_ever.eval_types import EvaluatorRelationship
 from every_eval_ever.instance_level_types import (
     InstanceLevelEvaluationLog,
     InteractionType,
 )
-from every_eval_ever.converters.inspect.instance_level_adapter import (
-    InspectInstanceLevelDataAdapter,
-)
-from inspect_ai.model import ChatMessageAssistant, ChatMessageUser, ContentText
 
 
 def _load_instance_level_data(adapter, filepath, metadata_args):

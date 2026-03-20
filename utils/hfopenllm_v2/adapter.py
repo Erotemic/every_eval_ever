@@ -21,16 +21,13 @@ from every_eval_ever.eval_types import (
     ScoreType,
     SourceDataHf,
 )
-
 from every_eval_ever.helpers import (
     SCHEMA_VERSION,
     fetch_json,
-    get_developer,
     make_model_info,
     make_source_metadata,
     save_evaluation_log,
 )
-
 
 # Source URL
 SOURCE_URL = 'https://open-llm-leaderboard-open-llm-leaderboard.hf.space/api/leaderboard/formatted'

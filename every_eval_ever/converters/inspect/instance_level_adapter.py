@@ -4,6 +4,7 @@ from typing import Any, List, Tuple
 
 _INSPECT_IMPORT_ERROR: Exception | None = None
 try:
+    from inspect_ai.log import EvalSample
     from inspect_ai.model import (
         ChatMessage,
         ChatMessageAssistant,
@@ -11,7 +12,6 @@ try:
         ChatMessageUser,
         ModelUsage,
     )
-    from inspect_ai.log import EvalSample
 except (
     Exception
 ) as ex:  # pragma: no cover - exercised only when optional deps missing
@@ -29,21 +29,20 @@ def _require_inspect_dependencies() -> None:
         ) from _INSPECT_IMPORT_ERROR
 
 
+from every_eval_ever.converters import SCHEMA_VERSION
+from every_eval_ever.converters.common.utils import sha256_string
 from every_eval_ever.instance_level_types import (
     AnswerAttributionItem,
     Evaluation,
     Input,
     InstanceLevelEvaluationLog,
-    Message,
     InteractionType,
-    Performance,
+    Message,
     Output,
+    Performance,
     TokenUsage,
     ToolCall,
 )
-
-from every_eval_ever.converters import SCHEMA_VERSION
-from every_eval_ever.converters.common.utils import sha256_string
 
 
 class InspectInstanceLevelDataAdapter:
