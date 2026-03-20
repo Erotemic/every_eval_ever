@@ -200,27 +200,6 @@ uv run python -m every_eval_ever validate --format github data/
 
 Exit code is `0` if all files pass and `1` if any fail.
 
-### Pre-commit hooks
-
-The repository also has a pre-commit hook for validation. To run it:
-
-```sh
-# Staged files only
-uv run pre-commit run
-
-# All files
-uv run pre-commit run --all-files
-
-# Specific files
-uv run pre-commit run --files a.json b.json c.json
-```
-
-To install the pre-commit so that it runs before `git commit` (optional):
-
-```sh
-uv run pre-commit install
-```
-
 ## 🗂️ Data Structure
 
 Evaluation data is hosted on the [Hugging Face datastore](https://huggingface.co/datasets/evaleval/EEE_datastore). The folder structure is:
