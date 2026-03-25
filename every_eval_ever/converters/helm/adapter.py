@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -172,18 +173,46 @@ class HELMAdapter(BaseEvaluationAdapter):
         # all_instance_logs: List[InstanceLevelEvaluationLog] = []
         aggregate_logs: List[EvaluationLog] = []
 
+        file_uuids = metadata_args.get('file_uuids')
+
         if self._directory_contains_required_files(dir_path):
             data = self._load_evaluation_run_logfiles(dir_path)
-            agg = self._transform_single(data, metadata_args)
+            per_log_metadata_args = dict(metadata_args)
+            if (
+                isinstance(file_uuids, list)
+                and file_uuids
+                and file_uuids[0]
+            ):
+                per_log_metadata_args['file_uuid'] = file_uuids[0]
+            else:
+                per_log_metadata_args['file_uuid'] = metadata_args.get(
+                    'file_uuid'
+                ) or str(uuid.uuid4())
+            agg = self._transform_single(data, per_log_metadata_args)
             aggregate_logs.append(agg)
         else:
+            converted_idx = 0
             for entry in os.scandir(dir_path):
                 if entry.is_dir() and self._directory_contains_required_files(
                     entry.path
                 ):
                     data = self._load_evaluation_run_logfiles(entry.path)
-                    agg = self._transform_single(data, metadata_args)
+                    per_log_metadata_args = dict(metadata_args)
+                    if (
+                        isinstance(file_uuids, list)
+                        and converted_idx < len(file_uuids)
+                        and file_uuids[converted_idx]
+                    ):
+                        per_log_metadata_args['file_uuid'] = file_uuids[
+                            converted_idx
+                        ]
+                    else:
+                        per_log_metadata_args['file_uuid'] = str(
+                            uuid.uuid4()
+                        )
+                    agg = self._transform_single(data, per_log_metadata_args)
                     aggregate_logs.append(agg)
+                    converted_idx += 1
 
         # # Write all consolidated instance logs to JSONL
         # with open(output_path, 'w', encoding='utf-8') as f:

@@ -21,9 +21,6 @@ except ImportError as exc:
         'Install it with: uv sync --extra inspect'
     ) from exc
 
-from every_eval_ever.converters.common.utils import (
-    extract_file_uuid_from_detailed_results,
-)
 from every_eval_ever.eval_types import EvaluationLog, EvaluatorRelationship
 from every_eval_ever.instance_level_types import InstanceLevelEvaluationLog
 
@@ -170,10 +167,6 @@ def save_evaluation_log(
         return False
 
 
-def extract_file_uuid_from_output(unified_output: EvaluationLog) -> str | None:
-    return extract_file_uuid_from_detailed_results(unified_output)
-
-
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
@@ -215,21 +208,14 @@ if __name__ == '__main__':
                 metadata_args
             )
             if unified_output and isinstance(unified_output, List):
-                for idx, single_unified_output in enumerate(unified_output):
-                    file_uuid = (
-                        file_uuids[idx] if idx < len(file_uuids) else None
+                if len(unified_output) != len(file_uuids):
+                    raise RuntimeError(
+                        'Inspect conversion produced a different number of '
+                        'logs than the generated UUID list.'
                     )
-                    if not file_uuid:
-                        file_uuid = extract_file_uuid_from_output(
-                            single_unified_output
-                        )
-                    if not file_uuid:
-                        file_uuid = str(uuid.uuid4())
-                        logger.warning(
-                            'Missing UUID for output %s; generated %s for aggregate save.',
-                            single_unified_output.evaluation_id,
-                            file_uuid,
-                        )
+                for single_unified_output, file_uuid in zip(
+                    unified_output, file_uuids
+                ):
                     save_evaluation_log(
                         single_unified_output,
                         inspect_converter,
