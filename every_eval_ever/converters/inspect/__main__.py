@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from argparse import ArgumentParser
 from enum import Enum
@@ -12,7 +13,9 @@ try:
     from inspect_ai.log import list_eval_logs
 
     from every_eval_ever.converters.inspect.adapter import InspectAIAdapter
-    from every_eval_ever.converters.inspect.supplemental_eval_details import SupplementalEvalDetails
+    from every_eval_ever.converters.inspect.supplemental_eval_details import (
+        SupplementalEvalDetails,
+    )
 except ImportError as exc:
     raise SystemExit(
         "The 'inspect-ai' package is required to use the Inspect AI converter.\n"
@@ -23,6 +26,11 @@ from every_eval_ever.eval_types import EvaluationLog, EvaluatorRelationship
 from every_eval_ever.instance_level_types import InstanceLevelEvaluationLog
 
 logger = logging.getLogger(__name__)
+
+_UUID_FILE_RE = re.compile(
+    r'(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:_samples)?(?:\.jsonl?)?$',
+    re.IGNORECASE,
+)
 
 
 def parse_args():
@@ -168,10 +176,11 @@ def save_evaluation_log(
 def extract_file_uuid_from_output(unified_output: EvaluationLog) -> str | None:
     detailed = unified_output.detailed_evaluation_results
     if detailed and detailed.file_path:
-        stem = Path(detailed.file_path).stem
-        suffix = '_samples'
-        if stem.endswith(suffix):
-            return stem[: -len(suffix)]
+        filename = Path(str(detailed.file_path)).name
+        uuid_match = _UUID_FILE_RE.search(filename)
+        if uuid_match:
+            return uuid_match.group('uuid')
+
     return None
 
 

@@ -27,9 +27,12 @@ def test_convert_inspect_uses_detailed_results_uuid_for_aggregate_file(
     log_path = tmp_path / 'inspect_log.json'
     log_path.write_text('{}', encoding='utf-8')
 
+    uuid_value = '5cd3f6ca-2fd0-4f88-8f19-9d53089641df'
     fake_log = SimpleNamespace(
         detailed_evaluation_results=SimpleNamespace(
-            file_path='/tmp/some_dataset/some_model/shared_uuid_samples.jsonl'
+            file_path=(
+                f'/tmp/some_dataset/some_model/{uuid_value}_samples.jsonl'
+            )
         )
     )
 
@@ -58,4 +61,17 @@ def test_convert_inspect_uses_detailed_results_uuid_for_aggregate_file(
     rc = cli._cmd_convert_inspect(_make_inspect_args(log_path, tmp_path))
 
     assert rc == 0
-    assert captured_eval_uuids == ['shared_uuid']
+    assert captured_eval_uuids == [uuid_value]
+
+
+def test_extract_file_uuid_from_detailed_results_parses_uuid_filename():
+    uuid_value = '5cd3f6ca-2fd0-4f88-8f19-9d53089641df'
+    fake_log = SimpleNamespace(
+        detailed_evaluation_results=SimpleNamespace(
+            file_path=f'/tmp/some_dataset/some_model/{uuid_value}_samples.JSONL'
+        )
+    )
+
+    assert (
+        cli._extract_file_uuid_from_detailed_results(fake_log) == uuid_value
+    )

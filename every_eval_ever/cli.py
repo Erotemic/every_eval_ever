@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -15,6 +16,11 @@ EVALUATOR_RELATIONSHIP_CHOICES = [
     'collaborative',
     'other',
 ]
+
+_UUID_FILE_RE = re.compile(
+    r'(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:_samples)?(?:\.jsonl?)?$',
+    re.IGNORECASE,
+)
 
 
 def _common_metadata(args: argparse.Namespace) -> dict[str, Any]:
@@ -66,10 +72,10 @@ def _extract_file_uuid_from_detailed_results(log: Any) -> str | None:
     if not file_path:
         return None
 
-    stem = Path(file_path).stem
-    suffix = '_samples'
-    if stem.endswith(suffix):
-        return stem[: -len(suffix)]
+    filename = Path(str(file_path)).name
+    uuid_match = _UUID_FILE_RE.search(filename)
+    if uuid_match:
+        return uuid_match.group('uuid')
 
     return None
 
