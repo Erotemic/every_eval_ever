@@ -68,7 +68,8 @@ def _require_helm_dependencies() -> None:
     if _HELM_IMPORT_ERROR is not None:
         raise ImportError(
             'HELM converter dependencies are missing. '
-            "Install with: pip install 'every_eval_ever[helm]'"
+            "Install with: uv sync --extra helm "
+            "(or pip install 'every_eval_ever[helm]')."
         ) from _HELM_IMPORT_ERROR
 
 
