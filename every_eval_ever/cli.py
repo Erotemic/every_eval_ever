@@ -188,6 +188,45 @@ def _cmd_convert_helm(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_convert_alpaca_eval(args: argparse.Namespace) -> int:
+    from every_eval_ever.converters.alpaca_eval.adapter import (
+        LEADERBOARDS,
+        AlpacaEvalAdapter,
+    )
+
+    adapter = AlpacaEvalAdapter()
+    versions = [args.version] if args.version else list(LEADERBOARDS.keys())
+    output_dir = Path(args.output_dir)
+
+    total = 0
+    for version in versions:
+        cfg_name = LEADERBOARDS[version]['source_name']
+        print(f'\n=== {cfg_name} ===')
+        logs = adapter.fetch_leaderboard(version)
+        benchmark_key = f'alpaca_eval_{version}'
+
+        for log in logs:
+            parts = log.model_info.id.split('/', 1)
+            developer = parts[0] if len(parts) == 2 else 'unknown'
+            model_name = parts[1] if len(parts) == 2 else log.model_info.id
+
+            out_dir = output_dir / benchmark_key / developer / model_name
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_file = out_dir / f'{str(uuid.uuid4())}.json'
+
+            import json
+
+            with out_file.open('w', encoding='utf-8') as f:
+                json.dump(
+                    log.model_dump(mode='json', exclude_none=True), f, indent=2
+                )
+            print(f'  {out_file}')
+            total += 1
+
+    print(f'\nConverted {total} model evaluation(s).')
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='every_eval_ever',
@@ -255,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest='source', required=True
     )
 
-    for source in ['lm_eval', 'inspect', 'helm']:
+    for source in ['lm_eval', 'inspect', 'helm', 'alpaca_eval']:
         source_parser = convert_subparsers.add_parser(
             source,
             help=f'Convert {source} logs',
@@ -264,7 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
         source_parser.add_argument(
             '--log_path',
             '--log-path',
-            required=True,
+            required=(source != 'alpaca_eval'),
             help='Path to source log file or directory to convert.',
         )
         source_parser.add_argument(
@@ -310,6 +349,17 @@ def build_parser() -> argparse.ArgumentParser:
             default='unknown',
             help='Evaluation library version recorded in eval_library.version.',
         )
+
+        if source == 'alpaca_eval':
+            source_parser.add_argument(
+                '--version',
+                choices=['v1', 'v2'],
+                default=None,
+                help=(
+                    'Which leaderboard version to convert: v1 (AlpacaEval 1.0) '
+                    'or v2 (AlpacaEval 2.0). Omit to convert both (default).'
+                ),
+            )
 
         if source == 'lm_eval':
             source_parser.add_argument(
@@ -365,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_convert_inspect(args)
         if args.source == 'helm':
             return _cmd_convert_helm(args)
+        if args.source == 'alpaca_eval':
+            return _cmd_convert_alpaca_eval(args)
 
     parser.print_help()
     return 1
