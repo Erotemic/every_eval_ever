@@ -12,6 +12,11 @@ from tqdm import tqdm
 SEP = '=' * 60
 SUB = '-' * 60
 
+REPO_ID = 'evaleval/EEE_datastore'
+FOLDER_PATH = 'viewer_parquets'
+
+HUGGING_FACE_DATASTORE = f'datasets/{REPO_ID}/{FOLDER_PATH}/**/*.parquet'
+
 
 def execute_query(con, sql):
     return con.execute(sql).fetchall()
@@ -179,10 +184,6 @@ def analyze_data(con, schema_table, instance_table) -> None:
 
 
 def main():
-    repo_id = 'evaleval/EEE_datastore'
-    folder_path = 'viewer_parquets'
-
-    HUGGING_FACE_DATASTORE = f'datasets/{repo_id}/{folder_path}/**/*.parquet'
     print(f'\n{SEP}')
     print('EVERY EVAL EVER STATS')
     print(f'DATASTORE: {HUGGING_FACE_DATASTORE}')
