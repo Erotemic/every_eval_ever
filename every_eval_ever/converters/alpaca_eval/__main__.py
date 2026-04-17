@@ -13,7 +13,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             'Fetch AlpacaEval leaderboard data from GitHub and convert it '
-            'to Every Eval Ever schema v0.2.2 JSON files.'
+            'to Every Eval Ever schema JSON files.'
         )
     )
     parser.add_argument(
