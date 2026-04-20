@@ -20,6 +20,11 @@ def parse_model_from_dir(dir_name: str) -> tuple[str, str]:
     if len(parts) >= 3:
         agent = parts[1]
         model = "_".join(parts[2:])
+        # If the model part is purely alphabetic (no digits or hyphens), it's
+        # part of the agent name rather than an LLM version (e.g. "iSWE_Agent").
+        if re.match(r"^[a-zA-Z]+$", model):
+            agent = "_".join(parts[1:])
+            model = agent
     elif len(parts) == 2:
         agent = parts[1]
         model = agent

@@ -208,6 +208,7 @@ def process_submission(
         raise FileNotFoundError(f"No *_result.json files in {dir_name}/logs/")
 
     # Aggregate per language
+    langs_in_submission: set[str] = set()
     resolved_by_lang: Counter = Counter()
     patch_applied_by_lang: Counter = Counter()
     no_p2p_failed_by_lang: Counter = Counter()
@@ -221,6 +222,7 @@ def process_submission(
         if lang is None:
             unknown_ids.append(iid)
             lang = "unknown"
+        langs_in_submission.add(lang)
         if data.get("resolved", False):
             resolved_by_lang[lang] += 1
         if data.get("patch_applied", False):
@@ -231,18 +233,20 @@ def process_submission(
     if unknown_ids:
         print(f"    WARNING: {len(unknown_ids)} instance_ids not in HF dataset, bucketed as 'unknown'")
 
+    # Only emit records for languages actually present in this submission's result
+    # files, to avoid spurious 0-score entries for uncovered languages.
     results = []
-    for lang, total in lang_counts.items():
-        resolved_count = resolved_by_lang.get(lang, 0)
-        patch_applied_count = patch_applied_by_lang.get(lang, 0)
-        no_p2p_failed_count = no_p2p_failed_by_lang.get(lang, 0)
+    for lang in langs_in_submission:
+        total = lang_counts.get(lang)
+        if total is None:
+            continue
         eval_log = convert_submission(
             submission_dir=submission_dir,
             ds=ds,
             lang=lang,
-            resolved_count=resolved_count,
-            patch_applied_count=patch_applied_count,
-            no_p2p_failed_count=no_p2p_failed_count,
+            resolved_count=resolved_by_lang.get(lang, 0),
+            patch_applied_count=patch_applied_by_lang.get(lang, 0),
+            no_p2p_failed_count=no_p2p_failed_by_lang.get(lang, 0),
             total_instances_for_lang=total,
             retrieved_timestamp=retrieved_timestamp,
             metadata=metadata,
