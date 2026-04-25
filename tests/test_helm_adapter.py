@@ -76,7 +76,10 @@ def test_mmlu_eval():
 
     assert converted_eval.detailed_evaluation_results is not None
     assert converted_eval.detailed_evaluation_results.format is not None
-    assert converted_eval.detailed_evaluation_results.total_rows == 10
+    # Per-(sample, metric) emission: each of the 10 samples produces one
+    # row per non-empty stat, so total_rows is much larger than the
+    # legacy "one row per sample" count.
+    assert converted_eval.detailed_evaluation_results.total_rows >= 10
 
 
 def test_hellswag_eval():
@@ -117,7 +120,8 @@ def test_hellswag_eval():
 
     assert converted_eval.detailed_evaluation_results is not None
     assert converted_eval.detailed_evaluation_results.format is not None
-    assert converted_eval.detailed_evaluation_results.total_rows == 10
+    # Per-(sample, metric): >= sample count, not equal to it.
+    assert converted_eval.detailed_evaluation_results.total_rows >= 10
 
 
 def test_narrativeqa_eval():
@@ -154,7 +158,8 @@ def test_narrativeqa_eval():
 
     assert converted_eval.detailed_evaluation_results is not None
     assert converted_eval.detailed_evaluation_results.format is not None
-    assert converted_eval.detailed_evaluation_results.total_rows == 5
+    # Per-(sample, metric): >= sample count, not equal to it.
+    assert converted_eval.detailed_evaluation_results.total_rows >= 5
 
 
 def test_missing_model_deployment_falls_back_to_model():
