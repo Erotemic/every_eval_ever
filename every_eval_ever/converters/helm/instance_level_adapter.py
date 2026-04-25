@@ -35,6 +35,21 @@ from every_eval_ever.instance_level_types import (
 )
 
 
+def _score_from_stat(stat) -> float | None:
+    value = getattr(stat, 'mean', None)
+    if value is None:
+        count = getattr(stat, 'count', None)
+        total = getattr(stat, 'sum', None)
+        if count:
+            value = total / count
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class HELMInstanceLevelDataAdapter:
     def __init__(
         self,
@@ -97,27 +112,23 @@ class HELMInstanceLevelDataAdapter:
             reasoning_traces = extract_all_reasonings(state)
             if isinstance(reasoning_traces, str):
                 reasoning_traces = [reasoning_traces]
+            if reasoning_traces is None:
+                reasoning_traces = []
+            reasoning_traces = [
+                trace for trace in reasoning_traces if isinstance(trace, str)
+            ]
 
-            is_correct = False
-            score = 0.0
-            if inst_stats:
-                em_stat = next(
-                    (
-                        s
-                        for s in inst_stats.stats
-                        if s.name.name == 'exact_match'
-                    ),
-                    None,
+            metric_stats = list(inst_stats.stats) if inst_stats else []
+            if not metric_stats:
+                correct_completions = sum(
+                    1 for c in completions if c.strip() in correct_refs
                 )
-                if em_stat:
-                    score = em_stat.mean
-                    is_correct = em_stat.mean > 0
-                else:  # TODO check for more specific tasks
-                    correct_completions = sum(
-                        1 for c in completions if c.strip() in correct_refs
-                    )
-                    score = correct_completions / len(completions)
-                    is_correct = score > 0
+                fallback_score = (
+                    correct_completions / len(completions)
+                    if completions
+                    else 0.0
+                )
+                metric_stats = [None]
 
             token_usage = None
             if inst_stats:
@@ -155,56 +166,66 @@ class HELMInstanceLevelDataAdapter:
                     total_tokens=int(p_tokens + c_tokens),
                 )
 
-            instance_level_logs.append(
-                InstanceLevelEvaluationLog(
-                    schema_version=SCHEMA_VERSION,
-                    evaluation_id=self.evaluation_id,
-                    model_id=model_id,
-                    evaluation_name=evaluation_name,
-                    sample_id=str(state.instance.id),
-                    sample_hash=sha256_string(
-                        state.request.prompt + (correct_refs[0] if correct_refs else '')
-                    ),  # TODO use all references
-                    interaction_type=InteractionType.single_turn,
-                    input=Input(
-                        raw=state.request.prompt,
-                        reference=correct_refs if correct_refs else [],
-                        choices=(
-                            list(state.output_mapping.values())
-                            if state.output_mapping
-                            else [
-                                ref.output.text
-                                for ref in state.instance.references
-                            ]
+            for stat in metric_stats:
+                if stat is None:
+                    metric_name = None
+                    score = fallback_score
+                else:
+                    metric_name = getattr(getattr(stat, 'name', None), 'name', None)
+                    score = _score_from_stat(stat)
+                    if score is None:
+                        continue
+                instance_level_logs.append(
+                    InstanceLevelEvaluationLog(
+                        schema_version=SCHEMA_VERSION,
+                        evaluation_id=self.evaluation_id,
+                        model_id=model_id,
+                        evaluation_name=evaluation_name,
+                        evaluation_result_id=metric_name,
+                        sample_id=str(state.instance.id),
+                        sample_hash=sha256_string(
+                            state.request.prompt + (correct_refs[0] if correct_refs else '')
+                        ),  # TODO use all references
+                        interaction_type=InteractionType.single_turn,
+                        input=Input(
+                            raw=state.request.prompt,
+                            reference=correct_refs if correct_refs else [],
+                            choices=(
+                                list(state.output_mapping.values())
+                                if state.output_mapping
+                                else [
+                                    ref.output.text
+                                    for ref in state.instance.references
+                                ]
+                            ),
                         ),
-                    ),
-                    output=Output(
-                        raw=completions, reasoning_trace=reasoning_traces
-                    ),
-                    answer_attribution=[
-                        AnswerAttributionItem(
-                            turn_idx=0,
-                            source='output.raw',
-                            extracted_value=state.result.completions[
-                                0
-                            ].text.strip()
-                            if state.result and state.result.completions
-                            else '',
-                            extraction_method='exact_match',
-                            is_terminal=True,
-                        )
-                    ],
-                    evaluation=Evaluation(
-                        score=float(score), is_correct=is_correct
-                    ),
-                    token_usage=token_usage,
-                    performance=Performance(
-                        generation_time_ms=state.result.request_time * 1000
-                        if state.result.request_time
-                        else None
-                    ),
+                        output=Output(
+                            raw=completions, reasoning_trace=reasoning_traces
+                        ),
+                        answer_attribution=[
+                            AnswerAttributionItem(
+                                turn_idx=0,
+                                source='output.raw',
+                                extracted_value=state.result.completions[
+                                    0
+                                ].text.strip()
+                                if state.result and state.result.completions
+                                else '',
+                                extraction_method='exact_match',
+                                is_terminal=True,
+                            )
+                        ],
+                        evaluation=Evaluation(
+                            score=float(score), is_correct=score > 0
+                        ),
+                        token_usage=token_usage,
+                        performance=Performance(
+                            generation_time_ms=state.result.request_time * 1000
+                            if state.result.request_time
+                            else None
+                        ),
+                    )
                 )
-            )
 
         self._save_json(instance_level_logs)
         return self.path, len(instance_level_logs)
