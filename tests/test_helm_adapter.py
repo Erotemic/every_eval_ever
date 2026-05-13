@@ -1,18 +1,25 @@
 import pytest
 
-pytest.importorskip(
-    'helm', reason='crfm-helm not installed; install with: uv sync --extra helm'
-)
-
 import tempfile
 from pathlib import Path
 
+from every_eval_ever.converters.helm import adapter as helm_adapter_module
 from every_eval_ever.converters.helm.adapter import HELMAdapter
 from every_eval_ever.eval_types import (
     EvaluationLog,
     EvaluatorRelationship,
     SourceDataHf,
     SourceMetadata,
+)
+
+
+pytestmark = pytest.mark.skipif(
+    helm_adapter_module._HELM_IMPORT_ERROR is not None,
+    reason=(
+        'HELM converter dependencies are missing: '
+        f'{helm_adapter_module._HELM_IMPORT_ERROR!r}. '
+        'Install with: uv sync --extra helm'
+    ),
 )
 
 
@@ -133,7 +140,7 @@ def test_hellswag_eval():
 
     assert converted_eval.detailed_evaluation_results is not None
     assert converted_eval.detailed_evaluation_results.format is not None
-    # Per-(sample, metric): >= sample count, not equal to it.
+    # Per-(sample, core metric): >= sample count, not equal to it.
     assert converted_eval.detailed_evaluation_results.total_rows >= 10
 
 
@@ -172,7 +179,7 @@ def test_narrativeqa_eval():
 
     assert converted_eval.detailed_evaluation_results is not None
     assert converted_eval.detailed_evaluation_results.format is not None
-    # Per-(sample, metric): >= sample count, not equal to it.
+    # Per-(sample, core metric): >= sample count, not equal to it.
     assert converted_eval.detailed_evaluation_results.total_rows >= 5
 
 

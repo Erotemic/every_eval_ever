@@ -40,8 +40,8 @@ def _score_from_stat(stat) -> float | None:
     """Return a scalar HELM stat value, or None for empty/bad stats.
 
     HELM usually provides ``mean``; some stats only have ``sum`` and
-    ``count``. Returning None lets callers skip non-valued bookkeeping
-    rows such as zero-count training cost stats.
+    ``count``. Returning None lets callers skip stat rows that do not
+    contain a usable scalar value.
     """
     value = getattr(stat, 'mean', None)
     if value is None:
@@ -94,12 +94,9 @@ def _evaluation_result_id(
 
 
 # Metric names whose per-instance score is a correctness signal in [0, 1]
-# where ``score > 0`` reasonably maps to ``is_correct=True``. Anything not
-# in this allowlist (token counts, runtime, finish-reason flags, logprobs,
-# etc.) gets ``is_correct=False`` because we have no correctness claim
-# from a bookkeeping/resource metric. Keep this list tight and named after
-# the actual HELM stat names — broaden only for verified correctness
-# semantics.
+# where ``score > 0`` reasonably maps to ``is_correct=True``. Keep this list
+# tight: graded core metrics such as rouge/bleu/f1 should stay out of it
+# because a positive score is not the same as a binary correctness claim.
 _BINARY_CORRECTNESS_METRIC_NAMES: frozenset[str] = frozenset({
     'exact_match',
     'quasi_exact_match',
@@ -121,9 +118,8 @@ def _is_correct_for_metric(metric_name: str | None, score: float) -> bool:
 
     For correctness metrics in the allowlist, the HELM convention is that
     score==1.0 means correct and 0.0 means wrong, so any positive score
-    rounds up to "correct". For anything else (bookkeeping / resource
-    stats, or graded metrics like rouge_l/bleu where >0 is not a correctness
-    signal) we deliberately do not claim correctness.
+    rounds up to "correct". For graded metrics like rouge_l/bleu/f1 where
+    >0 is not a correctness signal, we deliberately do not claim correctness.
     """
     if metric_name is None:
         return False
@@ -216,6 +212,9 @@ class HELMInstanceLevelDataAdapter:
                 )
             ]
             if not metric_stats:
+                # Preserve the legacy exact-match proxy instead of dropping
+                # samples that have no per-instance stats or no recognized
+                # core metric rows.
                 correct_completions = sum(
                     1 for c in completions if c.strip() in correct_refs
                 )

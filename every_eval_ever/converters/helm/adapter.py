@@ -3,7 +3,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 _HELM_IMPORT_ERROR: Exception | None = None
 try:
@@ -70,7 +70,6 @@ from every_eval_ever.eval_types import (
     SourceType,
     Uncertainty,
 )
-from every_eval_ever.instance_level_types import InstanceLevelEvaluationLog
 
 
 def _require_helm_dependencies() -> None:
@@ -220,7 +219,6 @@ class HELMAdapter(BaseEvaluationAdapter):
         Transforms HELM results into one aggregate EvaluationLog and one
         instance-level JSONL file containing all samples.
         """
-        # all_instance_logs: List[InstanceLevelEvaluationLog] = []
         aggregate_logs: List[EvaluationLog] = []
 
         file_uuids = metadata_args.get('file_uuids')
@@ -264,10 +262,6 @@ class HELMAdapter(BaseEvaluationAdapter):
                     aggregate_logs.append(agg)
                     converted_idx += 1
 
-        # # Write all consolidated instance logs to JSONL
-        # with open(output_path, 'w', encoding='utf-8') as f:
-        #     for log in all_instance_logs:
-        #         f.write(json.dumps(log.model_dump(), ensure_ascii=False) + '\n')
 
         return aggregate_logs
 
@@ -337,26 +331,9 @@ class HELMAdapter(BaseEvaluationAdapter):
 
         return run_spec_name.split(':')[0]
 
-    def _extract_metric_names(self, run_spec: RunSpec) -> List[str]:
-        """Return metric names declared by the HELM run spec.
-
-        Kept for callers that need the run-spec metric declaration. The
-        main aggregate conversion below uses ``stats.json`` so aggregate
-        IDs cover all core metric rows emitted from per-instance stats.
-        """
-        metric_names = []
-        for metric_spec in run_spec.metric_specs:
-            names = metric_spec.args.get('names')
-            if names:
-                metric_names.extend(names)
-            else:
-                metric_names.append(metric_spec.class_name.split('.')[-1])
-
-        return metric_names
-
     def _transform_single(
         self, raw_data: Dict, metadata_args: Dict[str, Any]
-    ) -> Tuple[EvaluationLog, List[InstanceLevelEvaluationLog]]:
+    ) -> EvaluationLog:
         """Convert one HELM run into aggregate JSON plus detail JSONL.
 
         The aggregate ``evaluation_result_id`` values are generated from
@@ -441,6 +418,8 @@ class HELMAdapter(BaseEvaluationAdapter):
             if metric_name is None or score is None:
                 continue
 
+            stat_count = getattr(stat, 'count', None)
+
             evaluation_result_id = _evaluation_result_id(
                 metric_name,
                 getattr(stat.name, 'split', None),
@@ -482,8 +461,15 @@ class HELMAdapter(BaseEvaluationAdapter):
                         score=score,
                         uncertainty=Uncertainty(
                             standard_deviation=getattr(stat, 'stddev', None),
-                            num_samples=adapter_spec.max_eval_instances
-                            or len(request_states),
+                            # Split-specific HELM stats may cover fewer
+                            # examples than the full run, so use the stat's
+                            # own count when it is available.
+                            num_samples=(
+                                stat_count
+                                if stat_count is not None
+                                else adapter_spec.max_eval_instances
+                                or len(request_states)
+                            ),
                         ),
                         details={
                             'count': str(getattr(stat, 'count', '')),
