@@ -36,6 +36,12 @@ from every_eval_ever.instance_level_types import (
 
 
 def _score_from_stat(stat) -> float | None:
+    """Return a scalar HELM stat value, or None for empty/bad stats.
+
+    HELM usually provides ``mean``; some stats only have ``sum`` and
+    ``count``. Returning None lets callers skip non-valued bookkeeping
+    rows such as zero-count training cost stats.
+    """
     value = getattr(stat, 'mean', None)
     if value is None:
         count = getattr(stat, 'count', None)
@@ -54,6 +60,7 @@ def _score_from_stat(stat) -> float | None:
 
 
 def _stat_name_part(value) -> str | None:
+    """Normalize HELM split/perturbation labels for stable IDs."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -68,6 +75,11 @@ def _evaluation_result_id(
     split=None,
     perturbation=None,
 ) -> str | None:
+    """Build the join key shared by aggregate and instance rows.
+
+    Split and perturbation labels are included so two HELM stats with the
+    same metric name do not collide in ``evaluation_result_id``.
+    """
     if metric_name is None:
         return None
     parts = [metric_name]
@@ -135,6 +147,7 @@ class HELMInstanceLevelDataAdapter:
         self.path = f'{evaluation_dir}/{evaulation_id}.{format}'
 
     def _save_json(self, items: List[InstanceLevelEvaluationLog]):
+        """Write one validated instance-level log per JSONL line."""
         eval_dir_path = Path(self.evaluation_dir)
         eval_dir_path.mkdir(parents=True, exist_ok=True)
         path = Path(self.path)
@@ -157,6 +170,12 @@ class HELMInstanceLevelDataAdapter:
         request_states: List[RequestState],
         per_instance_stats_list: List,
     ) -> Tuple[str, int]:
+        """Convert HELM request states into per-(sample, metric) rows.
+
+        When HELM per-instance stats are present, each numeric stat gets
+        its own detail row. If stats are absent, keep the legacy one-row
+        exact-match fallback so older or partial logs still convert.
+        """
         instance_level_logs: List[InstanceLevelEvaluationLog] = []
         for state in request_states:
             inst_stats = next(
@@ -199,6 +218,9 @@ class HELMInstanceLevelDataAdapter:
                 )
                 metric_stats = [None]
 
+            # Token usage is copied to every row for the same sample. This is
+            # intentionally denormalized so each detail row is independently
+            # useful when filtered by metric.
             token_usage = None
             if inst_stats:
                 p_tokens = next(

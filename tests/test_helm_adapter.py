@@ -17,6 +17,7 @@ from every_eval_ever.eval_types import (
 
 
 def _load_eval(adapter, filepath, metadata_args):
+    """Run the HELM aggregate adapter against one fixture directory."""
     eval_dirpath = Path(filepath)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -40,6 +41,7 @@ def _load_eval(adapter, filepath, metadata_args):
 
 
 def _assert_unique_evaluation_result_ids(converted_eval):
+    """Aggregate result IDs must be stable join targets for sample rows."""
     result_ids = [
         result.evaluation_result_id
         for result in converted_eval.evaluation_results

@@ -22,6 +22,7 @@ from every_eval_ever.instance_level_types import (
 
 
 def _require_helm():
+    """Skip HELM fixture tests when the optional converter deps are absent."""
     import_error = getattr(helm_adapter_module, '_HELM_IMPORT_ERROR', None)
     if import_error is not None:
         pytest.skip(
@@ -31,6 +32,7 @@ def _require_helm():
 
 
 def _load_instance_level_data(adapter, filepath, metadata_args):
+    """Run the HELM adapter and read back the generated JSONL detail rows."""
     eval_dirpath = Path(filepath)
     converted_eval_list = adapter.transform_from_directory(
         eval_dirpath,
@@ -60,6 +62,7 @@ def _load_instance_level_data(adapter, filepath, metadata_args):
 def _by_sample_and_metric(
     instance_logs,
 ) -> dict[tuple[str, str | None], InstanceLevelEvaluationLog]:
+    """Index detail rows by the two fields that should be unique together."""
     return {
         (log.sample_id, log.evaluation_result_id): log
         for log in instance_logs
@@ -67,12 +70,14 @@ def _by_sample_and_metric(
 
 
 def _metric_name_from_result_id(result_id: str | None) -> str | None:
+    """Strip split/perturbation suffixes from deterministic result IDs."""
     if result_id is None:
         return None
     return result_id.split(':', 1)[0]
 
 
 def _json_score_from_stat(stat: dict) -> float | None:
+    """Mirror converter score extraction for raw JSON fixtures."""
     value = stat.get('mean')
     if value is None:
         count = stat.get('count')
@@ -91,6 +96,7 @@ def _json_score_from_stat(stat: dict) -> float | None:
 
 
 def _expected_numeric_instance_stat_rows(filepath):
+    """Count fixture stats that should become instance-level rows."""
     per_instance_path = Path(filepath) / 'per_instance_stats.json'
     per_instance_stats = json.loads(per_instance_path.read_text())
     return sum(
@@ -119,6 +125,8 @@ def test_mmlu_instance_level():
             metadata_args,
         )
 
+        # The converter now emits many rows per sample. Count distinct samples
+        # separately from rows so this test stays focused on sample coverage.
         sample_ids = sorted({log.sample_id for log in instance_logs})
         assert len(sample_ids) == 10
         em_rows = [
@@ -129,6 +137,7 @@ def test_mmlu_instance_level():
         ]
         assert len(em_rows) == 10
 
+        # Pick a specific metric row instead of relying on JSONL order.
         log = _by_sample_and_metric(instance_logs)[
             ('id147', 'exact_match:test')
         ]
@@ -278,6 +287,8 @@ def test_per_sample_per_metric_rows_are_emitted():
             log for log in instance_logs if log.sample_id == 'id147'
         ]
         metric_ids = sorted(log.evaluation_result_id for log in rows_for_id147)
+        # This guards the core PR behavior: correctness and bookkeeping stats
+        # both survive as separate rows for the same sample.
         assert 'exact_match:test' in metric_ids
         assert 'num_prompt_tokens:test' in metric_ids
         assert all(log.evaluation_result_id is not None for log in rows_for_id147)
@@ -300,6 +311,8 @@ def test_is_correct_only_claimed_for_correctness_metrics():
             metadata_args,
         )
 
+        # Positive bookkeeping values are not correctness claims. A token
+        # count or runtime can be > 0 without the answer being correct.
         bookkeeping_names = {
             'num_references',
             'num_prompt_tokens',
@@ -332,6 +345,8 @@ def test_is_correct_only_claimed_for_correctness_metrics():
                 'tests/data/helm/narrative_qa:model=openai_gpt2',
                 metadata_args2,
             )
+            # Graded generation metrics also should not be coerced into a
+            # binary correctness label just because their scores are positive.
             graded = [
                 log
                 for log in narr_logs
@@ -362,6 +377,8 @@ def test_is_correct_is_true_for_correct_exact_match_rows():
             'tests/data/helm/mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2',
             metadata_args,
         )
+        # Correctness metrics are the exception: positive exact-match rows
+        # should still carry is_correct=True.
         positive_em_rows = [
             log
             for log in instance_logs
@@ -393,6 +410,7 @@ def test_is_correct_for_metric_helper():
 
 
 def test_score_from_stat_helper_edge_cases():
+    # Empty or malformed HELM stats should be skipped, not crash conversion.
     assert _score_from_stat(SimpleNamespace(mean=0.25, sum=10, count=2)) == 0.25
     assert _score_from_stat(SimpleNamespace(mean=None, sum=3, count=2)) == 1.5
     assert _score_from_stat(SimpleNamespace(mean=None, sum=0, count=0)) is None
@@ -401,6 +419,8 @@ def test_score_from_stat_helper_edge_cases():
 
 
 def test_evaluation_result_id_helper_disambiguates_split_and_perturbation():
+    # Split and perturbation suffixes prevent same-named HELM stats from
+    # colliding when they are used as join keys.
     assert _evaluation_result_id('exact_match') == 'exact_match'
     assert _evaluation_result_id('exact_match', 'test') == 'exact_match:test'
     assert (
@@ -428,6 +448,8 @@ def test_total_rows_matches_numeric_per_instance_stats():
             adapter, fixture, metadata_args
         )
 
+        # Count expected rows from the fixture itself so duplication or
+        # accidental filtering changes are caught precisely.
         expected_rows = _expected_numeric_instance_stat_rows(fixture)
         assert converted_eval.detailed_evaluation_results.total_rows == expected_rows
         assert len(instance_logs) == expected_rows
@@ -453,6 +475,8 @@ def test_instance_evaluation_result_ids_join_to_aggregate_results():
             metadata_args,
         )
 
+        # This is the most important schema invariant: every metric-specific
+        # detail row should be joinable to one aggregate evaluation result.
         aggregate_ids = {
             result.evaluation_result_id
             for result in converted_eval.evaluation_results
@@ -485,6 +509,8 @@ def test_aggregate_evaluation_result_ids_are_unique_and_non_null():
             metadata_args,
         )
 
+        # Aggregate IDs are the target side of the join, so they must be
+        # present and unique.
         result_ids = [
             result.evaluation_result_id
             for result in converted_eval.evaluation_results
@@ -497,6 +523,8 @@ def test_aggregate_evaluation_result_ids_are_unique_and_non_null():
 
 def test_missing_inst_stats_uses_legacy_exact_match_fallback():
     _require_helm()
+    # Some old or partial HELM logs may lack per-instance stats. The adapter
+    # should still emit the legacy one-row exact-match fallback.
     completion = SimpleNamespace(text='answer')
     state = SimpleNamespace(
         instance=SimpleNamespace(
@@ -539,6 +567,8 @@ def test_reasoning_traces_none_does_not_break_conversion(monkeypatch):
     _require_helm()
     from every_eval_ever.converters.helm import instance_level_adapter as mod
 
+    # HELM reasoning extraction may legitimately return None. The converter
+    # normalizes that case instead of passing an invalid value to the schema.
     monkeypatch.setattr(mod, 'extract_all_reasonings', lambda state: None)
 
     adapter = HELMAdapter()

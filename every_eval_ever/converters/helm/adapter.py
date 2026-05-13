@@ -193,6 +193,7 @@ class HELMAdapter(BaseEvaluationAdapter):
         return None
 
     def _load_evaluation_run_logfiles(self, dir_path) -> Dict:
+        """Load the HELM files needed for aggregate and detail conversion."""
         scenario_state_dict = self._load_file_if_exists(
             dir_path, self.SCENARIO_STATE_FILE
         )
@@ -320,6 +321,7 @@ class HELMAdapter(BaseEvaluationAdapter):
     def _extract_dataset_name(
         self, run_spec_name: str, scenario_name: str | None
     ) -> str:
+        """Prefer scenario metadata, falling back to HELM run-spec names."""
         if scenario_name:
             return scenario_name
 
@@ -335,6 +337,12 @@ class HELMAdapter(BaseEvaluationAdapter):
         return run_spec_name.split(':')[0]
 
     def _extract_metric_names(self, run_spec: RunSpec) -> List[str]:
+        """Return metric names declared by the HELM run spec.
+
+        Kept for callers that need the run-spec metric declaration. The
+        main aggregate conversion below uses ``stats.json`` so aggregate
+        IDs cover all numeric detail rows emitted from per-instance stats.
+        """
         metric_names = []
         for metric_spec in run_spec.metric_specs:
             names = metric_spec.args.get('names')
@@ -348,6 +356,13 @@ class HELMAdapter(BaseEvaluationAdapter):
     def _transform_single(
         self, raw_data: Dict, metadata_args: Dict[str, Any]
     ) -> Tuple[EvaluationLog, List[InstanceLevelEvaluationLog]]:
+        """Convert one HELM run into aggregate JSON plus detail JSONL.
+
+        The aggregate ``evaluation_result_id`` values are generated from
+        ``stats.json`` with the same helper used by the instance converter
+        so every metric-specific detail row can join back to an aggregate
+        result.
+        """
         run_spec = from_dict(data_class=RunSpec, data=raw_data['run_spec_dict'])
         # cast=[str] coerces int instance IDs to str; newer HELM versions
         # (e.g. long-context suite) store instance.id as int in the JSON.
@@ -412,6 +427,9 @@ class HELMAdapter(BaseEvaluationAdapter):
         seen_evaluation_result_ids: set[str] = set()
 
         for stat in stats_raw:
+            # The ID helper mirrors the instance-level converter. This is the
+            # key invariant: detail rows should never introduce metric IDs that
+            # are absent from aggregate evaluation_results.
             metric_name = getattr(getattr(stat, 'name', None), 'name', None)
             score = _score_from_stat(stat)
             if metric_name is None or score is None:
