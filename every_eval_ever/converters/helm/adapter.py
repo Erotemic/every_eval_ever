@@ -45,6 +45,7 @@ from every_eval_ever.converters.common.adapter import (
     SupportedLibrary,
 )
 from every_eval_ever.converters.common.utils import sha256_file
+from every_eval_ever.converters.helm.metrics import is_core_metric
 from every_eval_ever.converters.helm.instance_level_adapter import (
     HELMInstanceLevelDataAdapter,
     _evaluation_result_id,
@@ -341,7 +342,7 @@ class HELMAdapter(BaseEvaluationAdapter):
 
         Kept for callers that need the run-spec metric declaration. The
         main aggregate conversion below uses ``stats.json`` so aggregate
-        IDs cover all numeric detail rows emitted from per-instance stats.
+        IDs cover all core metric rows emitted from per-instance stats.
         """
         metric_names = []
         for metric_spec in run_spec.metric_specs:
@@ -359,9 +360,9 @@ class HELMAdapter(BaseEvaluationAdapter):
         """Convert one HELM run into aggregate JSON plus detail JSONL.
 
         The aggregate ``evaluation_result_id`` values are generated from
-        ``stats.json`` with the same helper used by the instance converter
-        so every metric-specific detail row can join back to an aggregate
-        result.
+        core metrics in ``stats.json`` with the same helper used by the
+        instance converter so every metric-specific detail row can join
+        back to an aggregate result.
         """
         run_spec = from_dict(data_class=RunSpec, data=raw_data['run_spec_dict'])
         # cast=[str] coerces int instance IDs to str; newer HELM versions
@@ -419,10 +420,13 @@ class HELMAdapter(BaseEvaluationAdapter):
 
         evaluation_id = f'{source_data.dataset_name}/{model_info.id.replace("/", "_")}/{evaluation_timestamp}'
 
-        # Build aggregate results from the numeric HELM stats themselves, not
+        # Build aggregate results from core HELM stats themselves, not
         # only from run_spec.metric_specs. The instance-level converter emits
-        # one row per numeric per-instance stat, so aggregate IDs must cover
-        # the same stat namespace for detailed rows to be joinable.
+        # one row per core per-instance stat, so aggregate IDs must cover
+        # the same core namespace for detailed rows to be joinable.
+        # TODO: Consider promoting bookkeeping telemetry into structured
+        # fields such as token_usage, performance, metadata, or
+        # additional_details in a separate follow-up.
         evaluation_results: List[EvaluationResult] = []
         seen_evaluation_result_ids: set[str] = set()
 
@@ -431,6 +435,8 @@ class HELMAdapter(BaseEvaluationAdapter):
             # key invariant: detail rows should never introduce metric IDs that
             # are absent from aggregate evaluation_results.
             metric_name = getattr(getattr(stat, 'name', None), 'name', None)
+            if not is_core_metric(metric_name):
+                continue
             score = _score_from_stat(stat)
             if metric_name is None or score is None:
                 continue
@@ -451,7 +457,7 @@ class HELMAdapter(BaseEvaluationAdapter):
                 lower_is_better=False,  # TODO schema.json check
                 score_type=ScoreType.continuous,
                 min_score=0,
-                max_score=max(1.0, score),
+                max_score=1.0,
             )
 
             split = getattr(stat.name, 'split', None)

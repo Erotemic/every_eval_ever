@@ -22,6 +22,7 @@ def _require_helm_dependencies() -> None:
 
 from every_eval_ever.converters import SCHEMA_VERSION
 from every_eval_ever.converters.common.utils import sha256_string
+from every_eval_ever.converters.helm.metrics import is_core_metric
 from every_eval_ever.converters.helm.utils import extract_all_reasonings
 from every_eval_ever.instance_level_types import (
     AnswerAttributionItem,
@@ -172,9 +173,9 @@ class HELMInstanceLevelDataAdapter:
     ) -> Tuple[str, int]:
         """Convert HELM request states into per-(sample, metric) rows.
 
-        When HELM per-instance stats are present, each numeric stat gets
-        its own detail row. If stats are absent, keep the legacy one-row
-        exact-match fallback so older or partial logs still convert.
+        When HELM per-instance stats are present, each core metric gets
+        its own detail row. If core metrics are absent, keep the legacy
+        one-row exact-match fallback so older or partial logs still convert.
         """
         instance_level_logs: List[InstanceLevelEvaluationLog] = []
         for state in request_states:
@@ -206,7 +207,14 @@ class HELMInstanceLevelDataAdapter:
                 trace for trace in reasoning_traces if isinstance(trace, str)
             ]
 
-            metric_stats = list(inst_stats.stats) if inst_stats else []
+            all_stats = list(inst_stats.stats) if inst_stats else []
+            metric_stats = [
+                stat
+                for stat in all_stats
+                if is_core_metric(
+                    getattr(getattr(stat, 'name', None), 'name', None)
+                )
+            ]
             if not metric_stats:
                 correct_completions = sum(
                     1 for c in completions if c.strip() in correct_refs
@@ -218,9 +226,13 @@ class HELMInstanceLevelDataAdapter:
                 )
                 metric_stats = [None]
 
+            # Scope control: only core HELM metrics become metric rows.
+            # TODO: Consider preserving additional bookkeeping telemetry in
+            # token_usage, performance.additional_details, or metadata.
+
             # Token usage is copied to every row for the same sample. This is
-            # intentionally denormalized so each detail row is independently
-            # useful when filtered by metric.
+            # intentionally denormalized so each core metric row is
+            # independently useful when filtered by metric.
             token_usage = None
             if inst_stats:
                 p_tokens = next(

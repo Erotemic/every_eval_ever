@@ -7,6 +7,7 @@ import pytest
 
 from every_eval_ever.converters.helm import adapter as helm_adapter_module
 from every_eval_ever.converters.helm.adapter import HELMAdapter
+from every_eval_ever.converters.helm.metrics import is_core_metric
 from every_eval_ever.converters.helm.instance_level_adapter import (
     HELMInstanceLevelDataAdapter,
     _BINARY_CORRECTNESS_METRIC_NAMES,
@@ -95,15 +96,16 @@ def _json_score_from_stat(stat: dict) -> float | None:
         return None
 
 
-def _expected_numeric_instance_stat_rows(filepath):
-    """Count fixture stats that should become instance-level rows."""
+def _expected_core_instance_stat_rows(filepath):
+    """Count core fixture stats that should become detail rows."""
     per_instance_path = Path(filepath) / 'per_instance_stats.json'
     per_instance_stats = json.loads(per_instance_path.read_text())
     return sum(
         1
         for item in per_instance_stats
         for stat in item.get('stats', [])
-        if _json_score_from_stat(stat) is not None
+        if is_core_metric(stat.get('name', {}).get('name'))
+        and _json_score_from_stat(stat) is not None
     )
 
 
@@ -268,7 +270,7 @@ def test_narrativeqa_instance_level():
         assert log.answer_attribution[0].extraction_method == 'exact_match'
 
 
-def test_per_sample_per_metric_rows_are_emitted():
+def test_per_sample_core_metric_rows_are_emitted():
     _require_helm()
     adapter = HELMAdapter()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -287,15 +289,17 @@ def test_per_sample_per_metric_rows_are_emitted():
             log for log in instance_logs if log.sample_id == 'id147'
         ]
         metric_ids = sorted(log.evaluation_result_id for log in rows_for_id147)
-        # This guards the core PR behavior: correctness and bookkeeping stats
-        # both survive as separate rows for the same sample.
+        # This guards the core PR behavior: HELM evaluation metrics survive
+        # as separate rows, while bookkeeping stats remain out-of-band.
         assert 'exact_match:test' in metric_ids
-        assert 'num_prompt_tokens:test' in metric_ids
+        assert 'quasi_exact_match:test' in metric_ids
+        assert 'num_prompt_tokens:test' not in metric_ids
+        assert 'inference_runtime:test' not in metric_ids
         assert all(log.evaluation_result_id is not None for log in rows_for_id147)
         assert len(metric_ids) == len(set(metric_ids))
 
 
-def test_is_correct_only_claimed_for_correctness_metrics():
+def test_bookkeeping_stats_are_not_emitted_as_metric_rows():
     _require_helm()
     adapter = HELMAdapter()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -312,7 +316,8 @@ def test_is_correct_only_claimed_for_correctness_metrics():
         )
 
         # Positive bookkeeping values are not correctness claims. A token
-        # count or runtime can be > 0 without the answer being correct.
+        # count or runtime can be > 0 without the answer being correct, so
+        # these stats should not become metric rows at all.
         bookkeeping_names = {
             'num_references',
             'num_prompt_tokens',
@@ -325,41 +330,43 @@ def test_is_correct_only_claimed_for_correctness_metrics():
             'num_bytes',
             'batch_size',
         }
-        bookkeeping = [
-            log
+        emitted_metric_names = {
+            _metric_name_from_result_id(log.evaluation_result_id)
             for log in instance_logs
-            if _metric_name_from_result_id(log.evaluation_result_id)
-            in bookkeeping_names
-        ]
-        assert bookkeeping, 'expected bookkeeping rows to be emitted'
-        assert all(
-            log.evaluation.is_correct is False for log in bookkeeping
-        ), 'bookkeeping metrics must not claim correctness'
+        }
+        assert emitted_metric_names.isdisjoint(bookkeeping_names)
 
-        with tempfile.TemporaryDirectory() as tmpdir2:
-            metadata_args2 = dict(metadata_args)
-            metadata_args2['parent_eval_output_dir'] = tmpdir2
-            metadata_args2['file_uuid'] = 'test_correctness_graded'
-            _, narr_logs = _load_instance_level_data(
-                adapter,
-                'tests/data/helm/narrative_qa:model=openai_gpt2',
-                metadata_args2,
-            )
-            # Graded generation metrics also should not be coerced into a
-            # binary correctness label just because their scores are positive.
-            graded = [
-                log
-                for log in narr_logs
-                if _metric_name_from_result_id(log.evaluation_result_id)
-                in {'rouge_l', 'f1_score', 'bleu_1', 'bleu_4'}
-            ]
-            assert graded, 'expected graded score rows in narrative_qa fixture'
-            assert all(
-                log.evaluation.is_correct is False for log in graded
-            ), (
-                'graded metrics (rouge_l/f1_score/bleu_*) must not be '
-                'treated as binary correctness'
-            )
+
+def test_graded_core_metrics_are_not_binary_correctness():
+    _require_helm()
+    adapter = HELMAdapter()
+    with tempfile.TemporaryDirectory() as tmpdir2:
+        metadata_args2 = {
+            'source_organization_name': 'TestOrg',
+            'evaluator_relationship': EvaluatorRelationship.first_party,
+            'parent_eval_output_dir': tmpdir2,
+            'file_uuid': 'test_correctness_graded',
+        }
+        _, narr_logs = _load_instance_level_data(
+            adapter,
+            'tests/data/helm/narrative_qa:model=openai_gpt2',
+            metadata_args2,
+        )
+        # Graded generation metrics also should not be coerced into a
+        # binary correctness label just because their scores are positive.
+        graded = [
+            log
+            for log in narr_logs
+            if _metric_name_from_result_id(log.evaluation_result_id)
+            in {'rouge_l', 'f1_score', 'bleu_1', 'bleu_4'}
+        ]
+        assert graded, 'expected graded score rows in narrative_qa fixture'
+        assert all(
+            log.evaluation.is_correct is False for log in graded
+        ), (
+            'graded metrics (rouge_l/f1_score/bleu_*) must not be '
+            'treated as binary correctness'
+        )
 
 
 def test_is_correct_is_true_for_correct_exact_match_rows():
@@ -433,7 +440,7 @@ def test_evaluation_result_id_helper_disambiguates_split_and_perturbation():
     )
 
 
-def test_total_rows_matches_numeric_per_instance_stats():
+def test_total_rows_matches_core_per_instance_stats():
     _require_helm()
     fixture = 'tests/data/helm/mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2'
     adapter = HELMAdapter()
@@ -448,9 +455,9 @@ def test_total_rows_matches_numeric_per_instance_stats():
             adapter, fixture, metadata_args
         )
 
-        # Count expected rows from the fixture itself so duplication or
-        # accidental filtering changes are caught precisely.
-        expected_rows = _expected_numeric_instance_stat_rows(fixture)
+        # Count expected core metric rows from the fixture itself so
+        # duplication or accidental filtering changes are caught precisely.
+        expected_rows = _expected_core_instance_stat_rows(fixture)
         assert converted_eval.detailed_evaluation_results.total_rows == expected_rows
         assert len(instance_logs) == expected_rows
         assert len({
@@ -518,7 +525,7 @@ def test_aggregate_evaluation_result_ids_are_unique_and_non_null():
         assert all(result_ids)
         assert len(result_ids) == len(set(result_ids))
         assert 'exact_match:test' in result_ids
-        assert 'num_prompt_tokens:test' in result_ids
+        assert 'num_prompt_tokens:test' not in result_ids
 
 
 def test_missing_inst_stats_uses_legacy_exact_match_fallback():
