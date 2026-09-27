@@ -29,6 +29,9 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+
+import requests
 
 from every_eval_ever.eval_types import (
     EvalLibrary,
@@ -51,7 +54,10 @@ from every_eval_ever.helpers import (
     save_evaluation_logs,
     save_failure_report,
 )
-from every_eval_ever.helpers.eval_card_registry import Registry
+from every_eval_ever.helpers.eval_card_registry import (
+    REGISTRY_BASE_URL,
+    Registry,
+)
 from every_eval_ever.helpers.fetch import fetch_text
 from every_eval_ever.helpers.io import datastore_path_components
 
@@ -67,6 +73,12 @@ DATASET_URL = 'https://huggingface.co/livebench'
 
 #: Category labels the site uses that are abbreviations.
 CATEGORY_SLUGS = {'IF': 'instruction_following'}
+
+#: Registry resolutions of LiveBench model names, pinned so a record's model
+#: id does not depend on the registry being reachable at convert time.
+#: Refresh with ``--refresh-registry-map``.
+REGISTRY_MAP = Path(__file__).with_name('registry_snapshot.json')
+REGISTRY_TIMEOUT = 120
 
 _RELEASE = re.compile(r"setSelectedDate\('(\d{4}-\d{2}-\d{2})'\)")
 
@@ -121,6 +133,71 @@ def category_slug(label: str) -> str:
     return CATEGORY_SLUGS.get(
         label, re.sub(r'\W+', '_', label.lower()).strip('_')
     )
+
+
+# -- registry --------------------------------------------------------------------
+
+
+def load_registry_map(path: Path = REGISTRY_MAP) -> dict[str, dict[str, Any]]:
+    """The pinned registry resolutions, keyed by LiveBench model name."""
+    return json.loads(path.read_text(encoding='utf-8'))['models']
+
+
+def refresh_registry_map(
+    names: list[str], base_url: str = REGISTRY_BASE_URL
+) -> dict[str, Any]:
+    """Resolve model names in the registry and return a map to pin.
+
+    Uses the side-effect-free ``exact`` mode. A resolution is kept only when
+    it names an existing ``<namespace>/<name>`` canonical; its organization
+    is read from the model's registry record.
+    """
+    base_url = base_url.rstrip('/')
+    response = requests.post(
+        f'{base_url}/api/v1/resolve/batch',
+        json=[
+            {'raw_value': name, 'entity_type': 'model', 'mode': 'exact'}
+            for name in names
+        ],
+        timeout=REGISTRY_TIMEOUT,
+    )
+    response.raise_for_status()
+    models: dict[str, dict[str, Any]] = {}
+    for resolution in response.json():
+        canonical_id = resolution.get('canonical_id')
+        # exact mode must never create a canonical, and a flat id names no
+        # datastore directory of its own
+        if (
+            not canonical_id
+            or resolution.get('created_new')
+            or '/' not in canonical_id
+        ):
+            continue
+        record = requests.get(
+            f'{base_url}/api/v1/models/{quote(canonical_id, safe="")}',
+            timeout=REGISTRY_TIMEOUT,
+        )
+        record.raise_for_status()
+        record = record.json()
+        models[resolution['raw_value']] = {
+            'canonical_id': canonical_id,
+            'strategy': resolution.get('strategy'),
+            'confidence': resolution.get('confidence'),
+            'review_status': resolution.get('review_status'),
+            'developer': record.get('developer'),
+            'org_id': record.get('org_id'),
+            'open_weights': record.get('open_weights'),
+        }
+    return {
+        '_meta': {
+            'endpoint': f'{base_url}/api/v1/resolve/batch',
+            'mode': 'exact',
+            'refreshed': time.strftime('%Y-%m-%d', time.gmtime()),
+            'n_queried': len(names),
+            'n_resolved': len(models),
+        },
+        'models': dict(sorted(models.items())),
+    }
 
 
 # -- conversion ----------------------------------------------------------------
@@ -181,21 +258,50 @@ def convert_row(
     model_links: dict[str, dict[str, Any]],
     registry: Registry,
     retrieved_timestamp: str,
+    registry_models: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[EvaluationLog, str, str]:
-    """One table row -> one EvaluationLog and its datastore directories."""
+    """One table row -> one EvaluationLog and its datastore directories.
+
+    ``model_info.id`` is the model's registry canonical id where the pinned
+    map resolves it, else ``<registry org id>/<LiveBench name>``. The organization is the
+    site's own (``modelLinks.js``); where the site gives none, the resolved
+    registry model's organization is used.
+    """
     model = (row.get('model') or '').strip()
     if not model:
         raise ValueError('row has no model name')
-    info = model_links.get(model)
-    organization = (info or {}).get('organization')
-    if not organization:
+    info = model_links.get(model) or {}
+    resolved = (registry_models or {}).get(model)
+    organization = info.get('organization')
+    details: dict[str, Any] = {}
+    if organization:
+        org = registry.org(organization)
+        org_id = org.canonical_id or re.sub(r'\W+', '-', organization.lower())
+        details['livebench_organization'] = organization
+        details.update(org.provenance('developer'))
+        open_weights = info.get('openweight')
+    elif resolved and resolved.get('developer') and resolved.get('org_id'):
+        organization = resolved['developer']
+        details['developer_registry_id'] = resolved['org_id']
+        open_weights = resolved.get('open_weights')
+    else:
         raise ValueError(
-            f'{model}: the site names no organization for this model '
-            '(no modelLinks.js entry)'
+            f'{model}: the site names no organization for this model (no '
+            'modelLinks.js entry) and the pinned registry map has no model '
+            'with an organization for it'
         )
-    org = registry.org(organization)
-    org_id = org.canonical_id or re.sub(r'\W+', '-', organization.lower())
-    model_id = f'{org_id}/{model}'
+    if resolved:
+        model_id = resolved['canonical_id']
+        details.update(
+            {
+                'model_registry_id': resolved['canonical_id'],
+                'model_registry_strategy': resolved.get('strategy'),
+                'model_registry_confidence': resolved.get('confidence'),
+                'model_registry_review_status': resolved.get('review_status'),
+            }
+        )
+    else:
+        model_id = f'{org_id}/{model}'
 
     results = []
     category_scores = []
@@ -242,15 +348,11 @@ def convert_row(
     if not results:
         raise ValueError(f'{model}: no task scores in the release table')
 
-    details = {
-        'livebench_organization': organization,
-        'deployment_type': 'unknown',
-        # the site marks open-weight models; its absence is not a claim
-        'model_availability': (
-            'open_weights' if info.get('openweight') is True else 'unknown'
-        ),
-        **org.provenance('developer'),
-    }
+    details['deployment_type'] = 'unknown'
+    # an open-weight mark is a claim; its absence is not the opposite claim
+    details['model_availability'] = (
+        'open_weights' if open_weights is True else 'unknown'
+    )
     for key, field in (
         ('displayName', 'livebench_display_name'),
         ('url', 'livebench_model_url'),
@@ -290,7 +392,9 @@ def convert_row(
             name=model,
             id=model_id,
             developer=organization,
-            additional_details={k: v for k, v in details.items() if v},
+            additional_details={
+                k: str(v) for k, v in details.items() if v is not None
+            },
         ),
         evaluation_results=results,
     )
@@ -307,6 +411,7 @@ def convert_release(
     model_links: dict[str, dict[str, Any]],
     registry: Registry,
     retrieved_timestamp: str,
+    registry_models: dict[str, dict[str, Any]] | None = None,
 ) -> SourceConversionResult[tuple[EvaluationLog, str, str]]:
     rows = parse_table(table_csv)
     bundles = []
@@ -321,6 +426,7 @@ def convert_release(
                     model_links,
                     registry,
                     retrieved_timestamp,
+                    registry_models,
                 )
             )
         except Exception as exc:
@@ -375,9 +481,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         '--no-registry-resolve',
         action='store_true',
-        help='Do not resolve organizations against the eval-card-registry.',
+        help=(
+            'Do not use the eval-card-registry: no organization resolution '
+            'and no pinned model map.'
+        ),
+    )
+    parser.add_argument(
+        '--refresh-registry-map',
+        action='store_true',
+        help=(
+            'Resolve every model in the selected releases against the live '
+            f'registry, rewrite {REGISTRY_MAP.name}, and convert nothing.'
+        ),
     )
     return parser.parse_args(argv)
+
+
+def _fetch_release(release: str) -> tuple[str, dict[str, list[str]]]:
+    table_csv = fetch_text(release_file(release, 'table', 'csv'))
+    categories = json.loads(
+        fetch_text(release_file(release, 'categories', 'json'))
+    )
+    return table_csv, categories
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -385,18 +510,34 @@ def main(argv: list[str] | None = None) -> int:
     releases = args.release or parse_releases(
         fetch_text(f'{RAW_BASE}/src/App.js')
     )
+    if args.refresh_registry_map:
+        names = sorted(
+            {
+                row['model']
+                for release in releases
+                for row in parse_table(_fetch_release(release)[0])
+            }
+        )
+        pinned = refresh_registry_map(names)
+        REGISTRY_MAP.write_text(
+            json.dumps(pinned, indent=2) + '\n', encoding='utf-8'
+        )
+        print(
+            f'{pinned["_meta"]["n_resolved"]} of {len(names)} model(s) '
+            f'resolved; wrote {REGISTRY_MAP}'
+        )
+        return 0
+
     model_links = parse_model_links(
         fetch_text(f'{RAW_BASE}/src/Table/modelLinks.js')
     )
     registry = Registry(enabled=not args.no_registry_resolve)
+    registry_models = None if args.no_registry_resolve else load_registry_map()
     retrieved_timestamp = str(time.time())
     results = []
     for release in releases:
         try:
-            table_csv = fetch_text(release_file(release, 'table', 'csv'))
-            categories = json.loads(
-                fetch_text(release_file(release, 'categories', 'json'))
-            )
+            table_csv, categories = _fetch_release(release)
             result = convert_release(
                 release,
                 table_csv,
@@ -404,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:
                 model_links,
                 registry,
                 retrieved_timestamp,
+                registry_models,
             )
         except Exception as exc:
             result = SourceConversionResult(

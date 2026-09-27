@@ -65,6 +65,7 @@ def test_rows_become_task_category_and_overall_results(converted):
         log.evaluation_id
         == 'livebench/2026-01-08/qwen3-235b-a22b-instruct-2507'
     )
+    # unresolved: the registry org id + the LiveBench name
     assert log.model_info.id == 'alibaba/qwen3-235b-a22b-instruct-2507'
     assert (developer, model) == ('alibaba', 'qwen3-235b-a22b-instruct-2507')
     assert log.model_info.additional_details['model_availability'] == (
@@ -112,13 +113,139 @@ def test_a_blank_cell_is_absent_not_zero(converted):
     )
 
 
-def test_a_model_without_an_organization_is_a_failure(converted):
-    assert converted.total_records == 3
-    assert len(converted.records) == 2
-    (failure,) = converted.failures
+ZEPHYR = {
+    'canonical_id': 'HuggingFaceH4/zephyr-7b-beta',
+    'developer': 'Hugging Face',
+    'org_id': 'huggingface',
+    'open_weights': True,
+    'strategy': 'exact',
+    'confidence': 1.0,
+    'review_status': 'reviewed',
+}
+QWEN = {
+    'canonical_id': 'Qwen/Qwen3-235B-A22B-Instruct-2507',
+    'developer': 'Alibaba',
+    'org_id': 'alibaba',
+    'open_weights': True,
+    'strategy': 'normalized',
+    'confidence': 0.95,
+    'review_status': 'reviewed',
+}
+
+
+def _convert(registry_models):
+    return adapter.convert_release(
+        RELEASE,
+        _read('table_2026_01_08.csv'),
+        json.loads(_read('categories_2026_01_08.json')),
+        adapter.parse_model_links(_read('modelLinks.js')),
+        Registry(),
+        '1234567890.0',
+        registry_models,
+    )
+
+
+def test_a_resolved_model_takes_its_registry_id_and_keeps_the_site_org():
+    result = _convert({'qwen3-235b-a22b-instruct-2507': QWEN})
+
+    log, developer, model = result.records[0]
+    assert log.model_info.id == 'Qwen/Qwen3-235B-A22B-Instruct-2507'
+    assert (developer, model) == ('Qwen', 'Qwen3-235B-A22B-Instruct-2507')
+    # the organization is still the one the site states
+    assert log.model_info.developer == 'Alibaba'
+    details = log.model_info.additional_details
+    assert details['livebench_organization'] == 'Alibaba'
+    assert details['model_registry_id'] == 'Qwen/Qwen3-235B-A22B-Instruct-2507'
+    # the record's identity stays the source's
+    assert log.evaluation_id == (
+        'livebench/2026-01-08/qwen3-235b-a22b-instruct-2507'
+    )
+    assert log.model_info.name == 'qwen3-235b-a22b-instruct-2507'
+
+
+def test_a_model_the_site_leaves_unlabeled_takes_the_registry_organization(
+    tmp_path,
+):
+    result = _convert({'zephyr-7b-beta': ZEPHYR})
+
+    assert not result.failures
+    log, developer, model = result.records[2]
+    assert log.evaluation_id == 'livebench/2026-01-08/zephyr-7b-beta'
+    assert log.model_info.name == 'zephyr-7b-beta'
+    assert log.model_info.id == 'HuggingFaceH4/zephyr-7b-beta'
+    assert log.model_info.developer == 'Hugging Face'
+    details = log.model_info.additional_details
+    assert details['model_registry_review_status'] == 'reviewed'
+    assert details['developer_registry_id'] == 'huggingface'
+    assert details['model_availability'] == 'open_weights'
+    assert 'livebench_organization' not in details
+    (path,) = adapter.export(
+        [result.records[2]], tmp_path / 'data' / adapter.COLLECTION
+    )
+    report = validate_file(path)
+    assert report.valid, report.errors
+
+
+def test_a_model_neither_the_site_nor_the_registry_places_is_a_failure():
+    result = _convert({})
+
+    assert result.total_records == 3
+    assert len(result.records) == 2
+    (failure,) = result.failures
     assert 'zephyr-7b-beta' in failure.reason
     assert 'no organization' in failure.reason
     assert failure.source_record['model'] == 'zephyr-7b-beta'
+
+
+def test_the_pinned_map_ships_with_the_adapter():
+    pinned = adapter.load_registry_map()
+
+    assert pinned
+    for name, entry in pinned.items():
+        assert '/' in entry['canonical_id'], name
+        assert entry['developer'] and entry['org_id'], name
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.payload
+
+
+def test_refresh_pins_only_existing_namespaced_canonicals(monkeypatch):
+    resolutions = [
+        {'raw_value': 'kept', 'canonical_id': 'org/kept', 'strategy': 'exact'},
+        # exact mode must never create; a draft it claims to have made is
+        # not a resolution
+        {'raw_value': 'created', 'canonical_id': 'org/c', 'created_new': True},
+        {'raw_value': 'missing', 'canonical_id': None},
+        # a flat id names no datastore directory
+        {'raw_value': 'flat', 'canonical_id': 'flat'},
+    ]
+    monkeypatch.setattr(
+        adapter.requests, 'post', lambda *a, **k: FakeResponse(resolutions)
+    )
+    monkeypatch.setattr(
+        adapter.requests,
+        'get',
+        lambda *a, **k: FakeResponse(
+            {'developer': 'Org', 'org_id': 'org', 'open_weights': False}
+        ),
+    )
+
+    pinned = adapter.refresh_registry_map(
+        ['kept', 'created', 'missing', 'flat']
+    )
+
+    assert list(pinned['models']) == ['kept']
+    assert pinned['models']['kept']['developer'] == 'Org'
+    assert pinned['_meta']['n_queried'] == 4
+    assert pinned['_meta']['n_resolved'] == 1
 
 
 def test_records_validate_at_their_datastore_path(converted, tmp_path):
