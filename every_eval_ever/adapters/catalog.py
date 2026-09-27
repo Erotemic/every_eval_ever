@@ -488,6 +488,17 @@ ADAPTERS: tuple[AdapterSpec, ...] = (
         output_scope='data_root',
     ),
     AdapterSpec(
+        key='terminal_bench_science',
+        module='every_eval_ever.adapters.terminal_bench_science.adapter',
+        collections=('terminal-bench-science',),
+        notes=(
+            'Reads the JSON the terminal-bench-science.ai leaderboard page '
+            'itself reads. The leaderboard carries no revision, so '
+            '--emit-source-version digests the published row ids, statuses '
+            'and metrics instead.'
+        ),
+    ),
+    AdapterSpec(
         key='vals_ai',
         module='every_eval_ever.adapters.vals_ai.adapter',
         collections=('vals-ai',),
