@@ -81,13 +81,14 @@ re-hosting bytes that are already durably stored.
 | `hfopenllm_v2` | HuggingFace Spaces API | Fetches the Open LLM Leaderboard v2 (4576+ models). The leaderboard is no longer maintained upstream, so this converts a frozen archive and is not scheduled. |
 | `helm` | HELM leaderboard | Converts HELM leaderboard data. Supports `--leaderboard_name` for Capabilities/Lite/Classic/Instruct/MMLU. |
 | `llm_stats` | LLM Stats API | Converts LLM Stats model, benchmark, and score API results into `data/llm-stats/`. |
+| `livebench` | livebench.ai site repository (GitHub) | Converts every LiveBench leaderboard release into `data/livebench/`: one record per model per release, with each task score, the site's category means and overall mean. |
 | `mercor_eval` | Mercor Evaluation Exports API | Fetches authenticated Mercor benchmark leaderboards and writes aggregate EEE records. |
 | `mt_bench` | LMSYS / FastChat | Converts MT-Bench GPT-4 single-answer judgments into `data/mt-bench/`. Emits overall, turn-1, and turn-2 means per model. |
 | `open_medical_llm` | HuggingFace (`openlifescienceai/results`) | Converts the Open Medical-LLM Leaderboard's lm-evaluation-harness results into `data/open-medical-llm/`. One record per model, one result per medical benchmark (9). See [`open_medical_llm/README.md`](open_medical_llm/README.md). |
 | `openeval` | HuggingFace | Converts OpenEval response scores from `human-centered-eval/OpenEval` into `data/openeval/`; pass `--include-instances` to also write `*_samples.jsonl` sidecars. |
 | `rewardbench` | HuggingFace | Fetches RewardBench v1 (CSV) and RewardBench v2 (JSON) leaderboard data. |
 | `tau_bench` | tau2-bench leaderboard submissions (GitHub) | Converts the public tau2-bench submissions into `data/tau-bench/`: one record per model, with a Pass^k result per domain and per k, plus cost per trajectory where reported. The raw base URL is pinned to a commit and each submission's payload hash is recorded, so a record names the exact input it was built from. |
-| `terminal_bench_2` | tbench.ai | Fetches Terminal-Bench 2.0 agentic coding benchmark results. |
+| `terminal_bench` | tbench.ai | Fetches every Terminal-Bench leaderboard version (2.0, 2.1, 3.0, 4.0), one collection each. |
 | `terminal_bench_science` | terminal-bench-science.ai | Converts the Terminal-Bench-Science leaderboard (expert-curated scientific research workflows, run by Harbor) into `data/terminal-bench-science/`. One record per agent+model row, with the overall trial resolution rate plus one result per scientific domain. See [`terminal_bench_science/README.md`](terminal_bench_science/README.md). |
 | `hle` | Scale SEAL leaderboard | Converts the Scale SEAL Humanity's Last Exam leaderboard into `data/hle/`. Emits per-model accuracy (with 95% CI) and calibration error. |
 | `mmlu_pro` | TIGER-Lab leaderboard CSV | Converts the MMLU-Pro leaderboard (`TIGER-Lab/mmlu_pro_leaderboard_submission`) into `data/mmlu-pro/`. Emits per-model overall + 14 per-subject accuracies. |

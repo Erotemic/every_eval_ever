@@ -18,6 +18,11 @@ uv run python -m every_eval_ever.adapters.terminal_bench_science.adapter \
 
 Needs no extras: the adapter uses only the core package and `requests`.
 
+Only release 0.1 (`v0-1-eval`) of the
+`terminal-bench-science/terminal-bench-science` package is supported. The CLI
+and saved-payload replay reject other leaderboards rather than labeling them
+as release 0.1.
+
 ## What each record holds
 
 One `EvaluationLog` per leaderboard row, with six results:
@@ -66,7 +71,7 @@ a row is added, restated or hidden, and not otherwise.
 `accuracy` is a 0–1 proportion over items; this is the share of 3-trial
 attempts a verifier accepted, published on a percent scale. `metric_id` is
 `terminal-bench-science.accuracy` with bounds `[0, 100]`, matching the sibling
-[`terminal_bench_2`](../terminal_bench_2/) adapter, so the two Terminal-Bench
+[`terminal_bench`](../terminal_bench/) adapter, so the two Terminal-Bench
 leaderboards join with each other. The alternative — rescaling to 0–1 and
 joining to global `accuracy` — would merge a trial-level resolution rate with
 MCQ accuracy.
@@ -110,3 +115,8 @@ A row the leaderboard is not publishing (`status != "display"`) is recorded as
 a `SourceRecordExclusion` — reported, but it does not fail the refresh. A row
 that cannot be represented is a `SourceRecordFailure` and the command exits
 non-zero.
+
+Published rows must include all five domain results. Trial and pass counts
+must be non-negative whole numbers, with positive trial counts divisible by
+three. Missing domains or invalid counts fail the row and are included in the
+failure report; counts are never rounded to make them fit.

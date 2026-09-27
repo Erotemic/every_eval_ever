@@ -264,3 +264,102 @@ def test_api_url_is_the_endpoint_the_leaderboard_page_reads():
         '?package=terminal-bench-science%2Fterminal-bench-science'
         '&name=v0-1-eval'
     )
+
+
+@pytest.mark.parametrize(
+    'flag,value',
+    [('--package', 'other/benchmark'), ('--leaderboard-name', 'v0-2-eval')],
+)
+def test_cli_rejects_sources_that_would_be_mislabeled_as_release_01(
+    flag, value
+):
+    with pytest.raises(SystemExit) as error:
+        adapter.parse_args([flag, value])
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    'field,value',
+    [('package', 'other/benchmark'), ('name', 'v0-2-eval'), ('name', None)],
+)
+def test_replay_and_version_probe_reject_an_unsupported_leaderboard(
+    payload, tmp_path, field, value
+):
+    payload['leaderboard'][field] = value
+    with pytest.raises(ValueError, match='leaderboard'):
+        _convert(payload, tmp_path)
+    with pytest.raises(ValueError, match='leaderboard'):
+        adapter.source_version(payload)
+
+
+@pytest.mark.parametrize('domains', [None, {}, [], {'life': {}}])
+def test_incomplete_domains_fail_the_row_instead_of_publishing_partial_results(
+    payload, tmp_path, domains
+):
+    payload['rows'][0]['metrics']['domain_metrics'] = domains
+    result = _convert(payload, tmp_path)
+    assert len(result.records) == 1
+    assert len(result.failures) == 1
+    assert 'domain' in result.failures[0].reason
+    with pytest.raises(SourceRecordsError):
+        result.raise_if_incomplete()
+
+
+@pytest.mark.parametrize(
+    'domain', ['life', 'physical', 'earth', 'mathematical', 'engineering']
+)
+def test_each_domain_is_required(payload, tmp_path, domain):
+    del payload['rows'][0]['metrics']['domain_metrics'][domain]
+    result = _convert(payload, tmp_path)
+    assert len(result.records) == 1
+    assert len(result.failures) == 1
+    assert domain in result.failures[0].reason
+
+
+@pytest.mark.parametrize('scope', ['overall', 'life'])
+@pytest.mark.parametrize(
+    'field,value',
+    [
+        ('tasks', 210.5),
+        ('tasks', 209),
+        ('tasks', 0),
+        ('passes', 20.5),
+        ('passes', -0.5),
+    ],
+)
+def test_invalid_counts_fail_without_rounding(
+    payload, tmp_path, scope, field, value
+):
+    metrics = payload['rows'][0]['metrics']
+    if scope != 'overall':
+        metrics = metrics['domain_metrics'][scope]
+    metrics[field] = value
+    result = _convert(payload, tmp_path)
+    assert len(result.records) == 1
+    assert len(result.failures) == 1
+    assert field in result.failures[0].reason
+    with pytest.raises(SourceRecordsError):
+        result.raise_if_incomplete()
+
+
+def test_cli_writes_a_failure_report_for_missing_domains(payload, tmp_path):
+    del payload['rows'][0]['metrics']['domain_metrics']
+    source = tmp_path / 'source.json'
+    source.write_text(json.dumps(payload))
+    report = tmp_path / 'failures.json'
+    with pytest.raises(SourceRecordsError):
+        adapter.main(
+            [
+                '--input-json',
+                str(source),
+                '--output-dir',
+                str(tmp_path / 'data' / adapter.COLLECTION),
+                '--failure-report',
+                str(report),
+            ]
+        )
+    failures = json.loads(report.read_text())
+    assert failures['failed_record_count'] == 1
+    assert failures['converted_records'] == 1
+    assert failures['failed_records'][0]['source_ref'] == 'leaderboard row 1'
+    assert 'domain' in failures['failed_records'][0]['reason']

@@ -72,8 +72,7 @@ SITE_URL = 'https://terminal-bench-science.ai'
 API_PATH = '/api/leaderboard'
 #: Harbor package the leaderboard is published under.
 PACKAGE = 'terminal-bench-science/terminal-bench-science'
-#: Leaderboard slug within that package. A later release publishes a new
-#: leaderboard rather than restating this one, so the slug is a CLI argument.
+#: The supported leaderboard; other releases need their own task configuration.
 LEADERBOARD_NAME = 'v0-1-eval'
 #: The benchmark release these rows were produced on.
 BENCHMARK_VERSION = '0.1'
@@ -167,6 +166,20 @@ def is_subpath(path: Path, parent: Path) -> bool:
         return False
 
 
+def _validated_leaderboard(payload: dict[str, Any]) -> dict[str, Any]:
+    """Require the leaderboard whose release and trial configuration we support."""
+    leaderboard = payload.get('leaderboard')
+    if (
+        not isinstance(leaderboard, dict)
+        or leaderboard.get('package') != PACKAGE
+        or leaderboard.get('name') != LEADERBOARD_NAME
+    ):
+        raise ValueError(
+            f'unsupported leaderboard: expected {PACKAGE}/{LEADERBOARD_NAME}'
+        )
+    return leaderboard
+
+
 def source_version(payload: dict[str, Any]) -> str:
     """A token that changes exactly when the published rows change.
 
@@ -175,6 +188,7 @@ def source_version(payload: dict[str, Any]) -> str:
     leaderboard produces the same token, which is what lets the scheduler skip
     it.
     """
+    leaderboard = _validated_leaderboard(payload)
     rows = payload.get('rows')
     rows = rows if isinstance(rows, list) else []
     fingerprint = [
@@ -192,10 +206,7 @@ def source_version(payload: dict[str, Any]) -> str:
             'utf-8'
         )
     ).hexdigest()
-    leaderboard = payload.get('leaderboard')
-    leaderboard_id = (
-        leaderboard.get('id') if isinstance(leaderboard, dict) else None
-    )
+    leaderboard_id = leaderboard.get('id')
     return f'{leaderboard_id or "unknown"}:{len(fingerprint)}:{digest[:16]}'
 
 
@@ -265,7 +276,19 @@ def _metric_config(description: str) -> MetricConfig:
     )
 
 
-def _uncertainty(metrics: dict[str, Any], field_prefix: str) -> Uncertainty:
+def _count(value: Any, field_name: str) -> int:
+    """Read a non-negative whole count without truncating fractional values."""
+    number = require_finite_number(value, field_name)
+    if number < 0 or not number.is_integer():
+        raise ValueError(
+            f'{field_name} must be a non-negative integer, got {value!r}'
+        )
+    return int(number)
+
+
+def _uncertainty(
+    metrics: dict[str, Any], field_prefix: str, trials: int
+) -> Uncertainty:
     """Standard error over the trials the score was computed on.
 
     The published figure matches the binomial standard error of the pass rate
@@ -279,9 +302,6 @@ def _uncertainty(metrics: dict[str, Any], field_prefix: str) -> Uncertainty:
             f'{field_prefix} accuracy_stderr must be non-negative, '
             f'got {stderr!r}'
         )
-    trials = int(
-        require_finite_number(metrics.get('tasks'), f'{field_prefix} tasks')
-    )
     return Uncertainty(
         standard_error=StandardError(value=stderr, method='analytic'),
         num_samples=trials,
@@ -293,12 +313,13 @@ def _score_details(
     aggregation_level: str,
     field_prefix: str,
 ) -> ScoreDetails:
-    trials = int(
-        require_finite_number(metrics.get('tasks'), f'{field_prefix} tasks')
-    )
-    passes = int(
-        require_finite_number(metrics.get('passes'), f'{field_prefix} passes')
-    )
+    trials = _count(metrics.get('tasks'), f'{field_prefix} tasks')
+    passes = _count(metrics.get('passes'), f'{field_prefix} passes')
+    if trials == 0 or trials % TRIALS_PER_TASK:
+        raise ValueError(
+            f'{field_prefix} tasks must be a positive multiple of '
+            f'{TRIALS_PER_TASK} trials, got {trials!r}'
+        )
     if not 0 <= passes <= trials:
         raise ValueError(
             f'{field_prefix} passes must be between 0 and {trials}, '
@@ -306,7 +327,7 @@ def _score_details(
         )
     return ScoreDetails(
         score=_percentage(metrics.get('accuracy'), f'{field_prefix} accuracy'),
-        uncertainty=_uncertainty(metrics, field_prefix),
+        uncertainty=_uncertainty(metrics, field_prefix, trials),
         details=_details(
             {
                 # `trials` and `tasks` are separate numbers here: the
@@ -401,11 +422,12 @@ def _results(
     ]
 
     domain_metrics = metrics.get('domain_metrics')
-    domain_metrics = domain_metrics if isinstance(domain_metrics, dict) else {}
+    if not isinstance(domain_metrics, dict):
+        raise ValueError('row domain_metrics must be an object')
     for domain, name in DOMAIN_NAMES.items():
         scoped = domain_metrics.get(domain)
         if not isinstance(scoped, dict):
-            continue
+            raise ValueError(f'domain {domain} metrics must be an object')
         results.append(
             EvaluationResult(
                 evaluation_result_id=f'{evaluation_id}#accuracy.{name}',
@@ -568,8 +590,7 @@ def convert_payload(
     """Convert every published row; account for the rest."""
     timestamp = retrieved_timestamp or str(time.time())
     registry = registry if registry is not None else registry_mod.Registry()
-    leaderboard = payload.get('leaderboard')
-    leaderboard = leaderboard if isinstance(leaderboard, dict) else {}
+    leaderboard = _validated_leaderboard(payload)
     rows = payload.get('rows')
     if not isinstance(rows, list):
         raise ValueError('leaderboard payload has no rows array')
@@ -659,12 +680,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         '--package',
         default=PACKAGE,
-        help=f'Harbor package to read (default: {PACKAGE}).',
+        choices=[PACKAGE],
+        help='The supported Terminal-Bench-Science Harbor package.',
     )
     parser.add_argument(
         '--leaderboard-name',
         default=LEADERBOARD_NAME,
-        help=f'Leaderboard slug (default: {LEADERBOARD_NAME}).',
+        choices=[LEADERBOARD_NAME],
+        help='The supported release 0.1 leaderboard.',
     )
     parser.add_argument(
         '--output-dir',
