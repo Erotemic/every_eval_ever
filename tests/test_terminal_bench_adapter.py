@@ -106,6 +106,7 @@ def test_payload_rows_become_entries_and_hidden_rows_are_excluded():
         'ci95_half_width': 2.0892351283,
         # 2.0 publishes n_trials 0 on every row: unset, not zero
         'n_trials': None,
+        'pass_at': {},
         'details': {},
     }
     # a row published "± N/A" carries no half-width
@@ -157,6 +158,21 @@ def test_newer_versions_keep_effort_trials_and_distinct_ids(tmp_path: Path):
     command = result.generation_config.generation_args.execution_command
     assert ' -k ' not in command
     assert 'terminal-bench/terminal-bench@4.0.0' in command
+    pass_results = logs[0].evaluation_results[1:]
+    assert [r.metric_config.metric_name for r in pass_results] == [
+        'Pass@2',
+        'Pass@3',
+        'Pass@4',
+        'Pass@5',
+    ]
+    pass_at_2 = pass_results[0]
+    assert pass_at_2.metric_config.metric_id == 'pass_at_k'
+    assert pass_at_2.metric_config.metric_parameters == {'k': 2}
+    assert pass_at_2.metric_config.max_score == 1
+    assert pass_at_2.score_details.score == 0.6485
+    assert pass_at_2.evaluation_result_id == (
+        'terminal-bench-4.0/5c537be4-7fc3-449b-8bfc-ceb9061c2535#pass_at_2'
+    )
     for path in adapter.export(bundles, tmp_path / 'data' / spec.collection):
         report = validate_file(path)
         assert report.valid, report.errors

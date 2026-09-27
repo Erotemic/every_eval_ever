@@ -20,6 +20,7 @@ Usage:
 import argparse
 import json
 import math
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,6 +121,9 @@ VERSIONS = (
 )
 VERSIONS_BY_KEY = {spec.version: spec for spec in VERSIONS}
 TB2 = VERSIONS_BY_KEY['2.0']
+
+#: ``pass_at_<k>`` metrics, published by some versions on a 0-1 scale.
+PASS_AT_KEY = re.compile(r'^pass_at_(\d+)$')
 
 #: Row metrics kept verbatim in ``score_details.details`` when published.
 DETAIL_METRICS = (
@@ -305,6 +309,11 @@ def parse_leaderboard_payload(payload: dict) -> SourceConversionResult[dict]:
                 'stderr': metrics.get('accuracy_stderr'),
                 'ci95_half_width': metrics.get('accuracy_ci95_half_width'),
                 'n_trials': n_trials,
+                'pass_at': {
+                    int(match.group(1)): value
+                    for key, value in metrics.items()
+                    if (match := PASS_AT_KEY.match(key)) and value is not None
+                },
                 'details': details,
             }
         )
@@ -475,6 +484,11 @@ def convert_entry(
         ),
     )
 
+    pass_results = [
+        _pass_at_result(spec, eval_id, date, leaderboard_url, k, value)
+        for k, value in sorted((entry.get('pass_at') or {}).items())
+    ]
+
     additional_details = {
         'agent_name': agent,
         'agent_organization': require_identity(
@@ -504,7 +518,50 @@ def convert_entry(
             developer=model_org,
             additional_details=additional_details,
         ),
-        evaluation_results=[eval_result],
+        evaluation_results=[eval_result, *pass_results],
+    )
+
+
+def _pass_at_result(
+    spec: BenchmarkVersion,
+    eval_id: str,
+    date: str,
+    leaderboard_url: str,
+    k: int,
+    value,
+) -> EvaluationResult:
+    """One published pass@k, on the leaderboard's own 0-1 scale."""
+    score = float(value)
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError(
+            f'Terminal-Bench pass@{k} must be a finite proportion between '
+            f'0 and 1, got {value!r}'
+        )
+    return EvaluationResult(
+        evaluation_result_id=f'{eval_id}#pass_at_{k}',
+        evaluation_name=spec.collection,
+        source_data=SourceDataUrl(
+            dataset_name=spec.collection,
+            source_type='url',
+            url=[leaderboard_url],
+        ),
+        evaluation_timestamp=date,
+        metric_config=MetricConfig(
+            evaluation_description=(
+                f'Share of tasks solved in at least one of {k} trials on '
+                f'Terminal-Bench {spec.version}'
+            ),
+            metric_id='pass_at_k',
+            metric_name=f'Pass@{k}',
+            metric_kind='pass_rate',
+            metric_unit='proportion',
+            metric_parameters={'k': k},
+            lower_is_better=False,
+            score_type=ScoreType.continuous,
+            min_score=0,
+            max_score=1,
+        ),
+        score_details=ScoreDetails(score=score),
     )
 
 
