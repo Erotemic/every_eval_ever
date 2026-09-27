@@ -197,6 +197,51 @@ def test_a_model_neither_the_site_nor_the_registry_places_is_a_failure():
     assert failure.source_record['model'] == 'zephyr-7b-beta'
 
 
+def _pinned(canonical_id):
+    return {**QWEN, 'canonical_id': canonical_id}
+
+
+def test_a_namespace_takes_the_spelling_most_pinned_ids_use():
+    casing = adapter.namespace_casing(
+        {
+            'a': _pinned('Qwen/Qwen2-7B-Instruct'),
+            'b': _pinned('Qwen/QwQ-32B'),
+            'c': _pinned('qwen/qwen3.6-plus'),
+            'd': _pinned('Anthropic/claude-3-opus-20240229'),
+            'e': _pinned('anthropic/claude-sonnet-3.7'),
+        }
+    )
+
+    assert casing == {'qwen': 'Qwen', 'anthropic': 'anthropic'}
+
+
+def test_one_publisher_files_under_one_directory():
+    result = _convert(
+        {
+            'qwen3-235b-a22b-instruct-2507': _pinned(
+                'qwen/qwen3-235b-a22b-instruct-2507'
+            ),
+            'qwen2-7b-instruct': _pinned('Qwen/Qwen2-7B-Instruct'),
+            'qwq-32b': _pinned('Qwen/QwQ-32B'),
+            'claude-3-opus-20240229': _pinned(
+                'Anthropic/claude-3-opus-20240229'
+            ),
+        }
+    )
+
+    qwen, claude = result.records
+    assert qwen[0].model_info.id == 'Qwen/qwen3-235b-a22b-instruct-2507'
+    assert qwen[1:] == ('Qwen', 'qwen3-235b-a22b-instruct-2507')
+    # the registry's own spelling is kept where the record names it
+    details = qwen[0].model_info.additional_details
+    assert details['model_registry_id'] == 'qwen/qwen3-235b-a22b-instruct-2507'
+    # an id built from the site's organization follows the same spelling
+    assert claude[0].model_info.id == (
+        'Anthropic/claude-opus-4-5-20251101-high-effort'
+    )
+    assert claude[1] == 'Anthropic'
+
+
 def test_the_pinned_map_ships_with_the_adapter():
     pinned = adapter.load_registry_map()
 
