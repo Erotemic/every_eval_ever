@@ -143,6 +143,33 @@ def load_registry_map(path: Path = REGISTRY_MAP) -> dict[str, dict[str, Any]]:
     return json.loads(path.read_text(encoding='utf-8'))['models']
 
 
+def namespace_casing(
+    registry_models: dict[str, dict[str, Any]] | None,
+) -> dict[str, str]:
+    """One spelling per model-id namespace, keyed by its lowercase form.
+
+    The registry spells some namespaces two ways (``Qwen/Qwen3-32B`` beside
+    ``qwen/qwen3.6-plus``, ``Anthropic/claude-3-opus-20240229`` beside
+    ``anthropic/claude-sonnet-3.7``), which would file one publisher under two
+    datastore directories. The spelling most pinned canonical ids use wins;
+    a tie goes to the lowercase one.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for entry in (registry_models or {}).values():
+        namespace = entry['canonical_id'].split('/', 1)[0]
+        spellings = counts.setdefault(namespace.lower(), {})
+        spellings[namespace] = spellings.get(namespace, 0) + 1
+    return {
+        key: min(spellings, key=lambda s: (-spellings[s], s != s.lower(), s))
+        for key, spellings in counts.items()
+    }
+
+
+def _with_namespace_casing(model_id: str, casing: dict[str, str]) -> str:
+    namespace, sep, rest = model_id.partition('/')
+    return casing.get(namespace.lower(), namespace) + sep + rest
+
+
 def refresh_registry_map(
     names: list[str], base_url: str = REGISTRY_BASE_URL
 ) -> dict[str, Any]:
@@ -262,7 +289,8 @@ def convert_row(
     """One table row -> one EvaluationLog and its datastore directories.
 
     ``model_info.id`` is the model's registry canonical id where the pinned
-    map resolves it, else ``<registry org id>/<LiveBench name>``. The organization is the
+    map resolves it, else ``<registry org id>/<LiveBench name>``, its
+    namespace spelled as ``namespace_casing`` settles. The organization is the
     site's own (``modelLinks.js``); where the site gives none, the resolved
     registry model's organization is used.
     """
@@ -301,6 +329,9 @@ def convert_row(
         )
     else:
         model_id = f'{org_id}/{model}'
+    model_id = _with_namespace_casing(
+        model_id, namespace_casing(registry_models)
+    )
 
     results = []
     category_scores = []
