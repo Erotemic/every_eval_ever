@@ -76,15 +76,16 @@ def test_rejected_entry_retains_source_provenance():
         raise AssertionError('expected invalid Terminal-Bench entry to fail')
 
 
-FIXTURE = (
-    Path(__file__).parent / 'data' / 'terminal_bench_2' / 'leaderboard.json'
-)
+FIXTURES = Path(__file__).parent / 'data' / 'terminal_bench_2'
+
+
+def _parse(name: str):
+    payload = json.loads((FIXTURES / name).read_text(encoding='utf-8'))
+    return adapter.parse_leaderboard_payload(payload)
 
 
 def test_payload_rows_become_entries_and_hidden_rows_are_excluded():
-    payload = json.loads(FIXTURE.read_text(encoding='utf-8'))
-
-    result = adapter.parse_leaderboard_payload(payload)
+    result = _parse('leaderboard.json')
 
     assert result.total_records == 3
     assert not result.failures
@@ -92,22 +93,27 @@ def test_payload_rows_become_entries_and_hidden_rows_are_excluded():
     assert "'hidden'" in result.exclusions[0].reason
     first, second = result.records
     assert first == {
+        'id': '5d127407-a570-4864-8e8a-022123748a19',
         'rank': 1,
         'agent': 'NexAU-AHE',
         'model': 'GPT-5.5',
         'date': '2026-04-23',
         'agent_org': 'china-qijizhifeng',
         'model_org': 'OpenAI',
+        'reasoning_effort': None,
         'accuracy': 84.7191011236,
+        'stderr': None,
         'ci95_half_width': 2.0892351283,
+        # 2.0 publishes n_trials 0 on every row: unset, not zero
+        'n_trials': None,
+        'details': {},
     }
     # a row published "± N/A" carries no half-width
     assert second['ci95_half_width'] is None
 
 
 def test_published_half_width_is_a_95_percent_interval(tmp_path: Path):
-    payload = json.loads(FIXTURE.read_text(encoding='utf-8'))
-    entries = adapter.parse_leaderboard_payload(payload).records
+    entries = _parse('leaderboard.json').records
 
     bundles = adapter.make_logs(entries, retrieved_timestamp='1234567890.0')
 
@@ -115,11 +121,52 @@ def test_published_half_width_is_a_95_percent_interval(tmp_path: Path):
     interval = with_ci.uncertainty.confidence_interval
     assert with_ci.uncertainty.standard_error is None
     assert interval.confidence_level == 0.95
-    assert interval.lower == 84.7191011236 - 2.0892351283
-    assert interval.upper == 84.7191011236 + 2.0892351283
+    assert interval.lower == round(84.7191011236 - 2.0892351283, 10)
+    assert interval.upper == round(84.7191011236 + 2.0892351283, 10)
+    # 2.0 documents 87 tasks x 5 trials
+    assert with_ci.uncertainty.num_samples == 435
     assert bundles[1][0].evaluation_results[0].score_details.uncertainty is None
     for path in adapter.export(
         bundles, tmp_path / 'data' / 'terminal-bench-2.0'
     ):
         report = validate_file(path)
         assert report.valid, report.errors
+
+
+def test_newer_versions_keep_effort_trials_and_distinct_ids(tmp_path: Path):
+    spec = adapter.VERSIONS_BY_KEY['4.0']
+    entries = _parse('leaderboard_4.0.json').records
+
+    bundles = adapter.make_logs(entries, '1234567890.0', spec=spec)
+
+    logs = [log for log, _, _ in bundles]
+    # same agent and model at two efforts: two records, two ids
+    assert [log.evaluation_id for log in logs] == [
+        'terminal-bench-4.0/5c537be4-7fc3-449b-8bfc-ceb9061c2535',
+        'terminal-bench-4.0/16db8ad5-84aa-4588-b660-1ce68c0d45e2',
+    ]
+    assert [
+        log.model_info.additional_details['reasoning_effort'] for log in logs
+    ] == ['max', 'xhigh']
+    result = logs[0].evaluation_results[0]
+    assert result.metric_config.metric_id == 'terminal-bench-4.0.accuracy'
+    assert result.score_details.score == 58.18
+    assert result.score_details.uncertainty.num_samples == 330
+    assert result.score_details.details['successes'] == '192'
+    # 4.0 publishes no task/trial split, so none is claimed
+    command = result.generation_config.generation_args.execution_command
+    assert ' -k ' not in command
+    assert 'terminal-bench/terminal-bench@4.0.0' in command
+    for path in adapter.export(bundles, tmp_path / 'data' / spec.collection):
+        report = validate_file(path)
+        assert report.valid, report.errors
+
+
+def test_catalog_declares_every_version_collection():
+    from every_eval_ever.adapters import catalog
+
+    spec = catalog.get('terminal_bench_2')
+    assert spec.output_scope == 'data_root'
+    assert set(spec.collections) == {
+        version.collection for version in adapter.VERSIONS
+    }

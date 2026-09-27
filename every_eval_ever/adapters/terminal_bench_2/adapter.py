@@ -1,14 +1,17 @@
 """
-Script to convert Terminal-Bench 2.0 leaderboard data to the EvalEval schema format.
+Convert the Terminal-Bench leaderboards to the EvalEval schema format.
 
 Data source:
-- Terminal-Bench 2.0 leaderboard: https://www.tbench.ai/leaderboard/terminal-bench/2.0
-- JSON behind it: the Harbor ``leaderboard-read`` function the page POSTs
-  ``{"package": ..., "name": ...}`` to
+- Terminal-Bench leaderboards: https://www.tbench.ai (one per benchmark version)
+- JSON behind them: the Harbor ``leaderboard-read`` function the page POSTs
+  ``{"package": ..., "name": ...}`` to. The package and leaderboard name of
+  each version are the ones the site's own version picker uses.
 
-Terminal-Bench is an agentic coding benchmark that evaluates agent+model pairs on
-87 terminal-based tasks with 5 trials each. Each leaderboard entry represents a
-unique agent+model combination. Agent metadata is stored in model_info.additional_details.
+Terminal-Bench evaluates agent+model pairs on terminal tasks, each attempted
+several times; the published accuracy is the share of trials the task's
+verifier accepted. Each version is its own collection,
+``data/terminal-bench-<version>/``. Agent metadata is stored in
+``model_info.additional_details``.
 
 Usage:
     uv run python -m every_eval_ever.adapters.terminal_bench_2.adapter
@@ -18,6 +21,7 @@ import argparse
 import json
 import math
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -54,16 +58,81 @@ from every_eval_ever.helpers import (
 )
 from every_eval_ever.helpers.io import require_identity
 
-LEADERBOARD_URL = 'https://www.tbench.ai/leaderboard/terminal-bench/2.0'
 #: The endpoint tbench.ai's own leaderboard page reads.
 LEADERBOARD_API_URL = (
     'https://ofhuhcpkvzjlejydnvyd.supabase.co/functions/v1/leaderboard-read'
 )
-LEADERBOARD_PACKAGE = 'terminal-bench/terminal-bench-2'
-LEADERBOARD_NAME = '2-0'
-OUTPUT_DIR = 'data/terminal-bench-2.0'
-TASK_COUNT = 87
-TRIALS_PER_TASK = 5
+OUTPUT_DIR = 'data'
+
+
+@dataclass(frozen=True)
+class BenchmarkVersion:
+    """One Terminal-Bench leaderboard, as the site's version picker names it."""
+
+    version: str
+    package: str
+    leaderboard: str
+    #: The dataset reference ``harbor run -d`` takes for this version.
+    run_dataset: str
+    #: Set only where the benchmark documents them; the leaderboard publishes
+    #: the trial count per row, not the task/trial split.
+    task_count: int | None = None
+    trials_per_task: int | None = None
+
+    @property
+    def collection(self) -> str:
+        return f'terminal-bench-{self.version}'
+
+    @property
+    def leaderboard_url(self) -> str:
+        return (
+            f'https://www.tbench.ai/leaderboard/terminal-bench/{self.version}'
+        )
+
+
+VERSIONS = (
+    BenchmarkVersion(
+        '2.0',
+        package='terminal-bench/terminal-bench-2',
+        leaderboard='2-0',
+        run_dataset='terminal-bench/terminal-bench-2',
+        task_count=87,
+        trials_per_task=5,
+    ),
+    BenchmarkVersion(
+        '2.1',
+        package='terminal-bench/terminal-bench-2-1',
+        leaderboard='main',
+        run_dataset='terminal-bench/terminal-bench-2-1',
+    ),
+    BenchmarkVersion(
+        '3.0',
+        package='terminal-bench/terminal-bench',
+        leaderboard='3-0-0',
+        run_dataset='terminal-bench/terminal-bench@3.0.0',
+    ),
+    BenchmarkVersion(
+        '4.0',
+        package='terminal-bench/terminal-bench',
+        leaderboard='4-0-0',
+        run_dataset='terminal-bench/terminal-bench@4.0.0',
+    ),
+)
+VERSIONS_BY_KEY = {spec.version: spec for spec in VERSIONS}
+TB2 = VERSIONS_BY_KEY['2.0']
+
+#: Row metrics kept verbatim in ``score_details.details`` when published.
+DETAIL_METRICS = (
+    'n_trials',
+    'successes',
+    'total_cost_usd',
+    'total_tokens',
+    'uncached_input_tokens',
+    'cached_input_tokens',
+    'output_tokens',
+    'avg_trial_duration_sec',
+    'reward_hacks',
+)
 
 ORG_SLUG_MAP = {
     'Google': 'google',
@@ -73,6 +142,7 @@ ORG_SLUG_MAP = {
     'Moonshot AI': 'moonshot-ai',
     'Z-AI': 'zhipu-ai',
     'Z.ai': 'zhipu-ai',
+    'Z.AI': 'zhipu-ai',
     'DeepSeek': 'deepseek',
     'Alibaba': 'alibaba',
     'MiniMax': 'minimax',
@@ -108,14 +178,15 @@ ORG_SLUG_MAP = {
 
 
 def fetch_leaderboard_payload(
+    spec: BenchmarkVersion = TB2,
     api_url: str = LEADERBOARD_API_URL,
-    package: str = LEADERBOARD_PACKAGE,
-    name: str = LEADERBOARD_NAME,
 ) -> dict:
     """POST the leaderboard query the tbench.ai page makes; return its JSON."""
     request = Request(
         api_url,
-        data=json.dumps({'package': package, 'name': name}).encode('utf-8'),
+        data=json.dumps(
+            {'package': spec.package, 'name': spec.leaderboard}
+        ).encode('utf-8'),
         method='POST',
         headers={
             'Content-Type': 'application/json',
@@ -129,7 +200,7 @@ def fetch_leaderboard_payload(
         url=api_url,
         content=body,
         content_type=content_type,
-        label=f'{package}:{name}',
+        label=f'{spec.package}:{spec.leaderboard}',
     )
     payload = json.loads(body)
     if not isinstance(payload, dict):
@@ -211,20 +282,34 @@ def parse_leaderboard_payload(payload: dict) -> SourceConversionResult[dict]:
                 )
             )
             continue
+        # 2.0 publishes 0 trials for every row: not a count, just unset.
+        n_trials = row.get('n_trials') or metrics.get('n_trials') or None
+        details = {
+            key: str(metrics[key])
+            for key in DETAIL_METRICS
+            if metrics.get(key) is not None
+        }
+        if n_trials is not None:
+            details['n_trials'] = str(n_trials)
         entries.append(
             {
+                'id': row.get('id'),
                 'rank': row.get('rank'),
                 'agent': _label(metadata.get('agent_display')),
                 'model': _label(metadata.get('model_display')),
                 'date': metadata.get('date'),
                 'agent_org': _label(metadata.get('agent_org')),
                 'model_org': _label(metadata.get('model_org')),
+                'reasoning_effort': metadata.get('reasoning_effort'),
                 'accuracy': metrics.get('accuracy'),
+                'stderr': metrics.get('accuracy_stderr'),
                 'ci95_half_width': metrics.get('accuracy_ci95_half_width'),
+                'n_trials': n_trials,
+                'details': details,
             }
         )
     return SourceConversionResult(
-        source_name='Terminal-Bench 2.0 leaderboard',
+        source_name='Terminal-Bench leaderboard',
         total_records=len(rows),
         records=entries,
         failures=failures,
@@ -249,12 +334,27 @@ def make_model_id(model_org: str, model_name: str) -> str:
     return f'{get_org_slug(model_org)}/{get_model_slug(model_name)}'
 
 
+def _non_negative(entry: dict, key: str, label: str) -> float | None:
+    value = entry.get(key)
+    if value is None:
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0:
+        raise ValueError(
+            f'Terminal-Bench {label} must be a finite non-negative number, '
+            f'got {value!r}'
+        )
+    return number
+
+
 def convert_entry(
     entry: dict,
     retrieved_timestamp: str,
-    leaderboard_url: str = LEADERBOARD_URL,
+    leaderboard_url: str | None = None,
+    spec: BenchmarkVersion = TB2,
 ) -> EvaluationLog:
     """Convert a single leaderboard entry to an EvaluationLog."""
+    leaderboard_url = leaderboard_url or spec.leaderboard_url
     agent = require_identity(
         entry.get('agent'),
         f'Terminal-Bench agent for rank {entry.get("rank")!r}',
@@ -277,30 +377,24 @@ def convert_entry(
             'Terminal-Bench accuracy must be a finite percentage between '
             f'0 and 100, got {entry.get("accuracy")!r}'
         )
-    stderr_value = entry.get('stderr')
-    stderr = None if stderr_value is None else float(stderr_value)
-    if stderr is not None and (not math.isfinite(stderr) or stderr < 0.0):
-        raise ValueError(
-            'Terminal-Bench standard error must be a finite non-negative '
-            f'number, got {stderr_value!r}'
-        )
-    ci_value = entry.get('ci95_half_width')
-    half_width = None if ci_value is None else float(ci_value)
-    if half_width is not None and (
-        not math.isfinite(half_width) or half_width < 0.0
-    ):
-        raise ValueError(
-            'Terminal-Bench 95% CI half-width must be a finite non-negative '
-            f'number, got {ci_value!r}'
-        )
+    stderr = _non_negative(entry, 'stderr', 'standard error')
+    half_width = _non_negative(entry, 'ci95_half_width', '95% CI half-width')
     model_id = make_model_id(model_org, model_name)
     agent_slug = sanitize_filename(agent.lower().replace(' ', '-'))
     model_slug = get_model_slug(model_name)
 
+    # The leaderboard row id is unique and stable; agent + model is neither
+    # (one model runs under several reasoning efforts).
+    row_id = entry.get('id')
     eval_id = (
-        f'terminal-bench-2.0/{agent_slug}__{model_slug}/{retrieved_timestamp}'
+        f'{spec.collection}/{row_id}'
+        if row_id
+        else f'{spec.collection}/{agent_slug}__{model_slug}/{retrieved_timestamp}'
     )
 
+    num_samples = entry.get('n_trials')
+    if num_samples is None and spec.task_count and spec.trials_per_task:
+        num_samples = spec.task_count * spec.trials_per_task
     uncertainty = None
     if stderr is not None or half_width is not None:
         uncertainty = Uncertainty(
@@ -308,36 +402,51 @@ def convert_entry(
                 None if stderr is None else StandardError(value=stderr)
             ),
             # The source publishes the half-width; the bounds are exactly
-            # accuracy -/+ it, not clipped to the score range.
+            # accuracy -/+ it (rounded off float noise), not clipped to the
+            # score range.
             confidence_interval=(
                 None
                 if half_width is None
                 else ConfidenceInterval(
-                    lower=accuracy - half_width,
-                    upper=accuracy + half_width,
+                    lower=round(accuracy - half_width, 10),
+                    upper=round(accuracy + half_width, 10),
                     confidence_level=0.95,
                 )
             ),
-            num_samples=TASK_COUNT * TRIALS_PER_TASK,
+            num_samples=None if num_samples is None else int(num_samples),
         )
+
+    if spec.task_count and spec.trials_per_task:
+        description = (
+            f'Task resolution accuracy across {spec.task_count} terminal '
+            f'tasks with {spec.trials_per_task} trials each'
+        )
+    else:
+        description = (
+            'Share of trials whose task verifier accepted the result on '
+            f'Terminal-Bench {spec.version}'
+        )
+    execution_command = (
+        f'harbor run -d {spec.run_dataset} -a "{agent}" -m "{model_name}"'
+    )
+    if spec.trials_per_task:
+        execution_command += f' -k {spec.trials_per_task}'
 
     eval_result = EvaluationResult(
         evaluation_result_id=f'{eval_id}#accuracy',
-        evaluation_name='terminal-bench-2.0',
+        evaluation_name=spec.collection,
         source_data=SourceDataUrl(
-            dataset_name='terminal-bench-2.0',
+            dataset_name=spec.collection,
             source_type='url',
             url=[leaderboard_url],
         ),
         evaluation_timestamp=date,
         metric_config=MetricConfig(
-            evaluation_description='Task resolution accuracy across 87 terminal tasks with 5 trials each',
-            # Namespaced, not the registry's `accuracy`: this is the share of 87
-            # tasks resolved, averaged over 5 trials each, on the leaderboard's
-            # own percent scale. The registry carries no Terminal-Bench metric,
-            # and joining a trial-averaged resolution rate to plain `accuracy`
-            # would merge two different quantities.
-            metric_id='terminal-bench-2.0.accuracy',
+            evaluation_description=description,
+            # Namespaced, not the registry's `accuracy`: this is a share of
+            # verifier-accepted trials, on the leaderboard's own percent
+            # scale, and each version is a different task set.
+            metric_id=f'{spec.collection}.accuracy',
             metric_name='Accuracy',
             metric_kind='accuracy',
             metric_unit='percent',
@@ -348,6 +457,7 @@ def convert_entry(
         ),
         score_details=ScoreDetails(
             score=accuracy,
+            details=entry.get('details') or None,
             uncertainty=uncertainty,
         ),
         generation_config=GenerationConfig(
@@ -360,14 +470,20 @@ def convert_entry(
                         ),
                     ],
                 ),
-                execution_command=(
-                    'harbor run -d terminal-bench/terminal-bench-2 '
-                    f'-a "{agent}" -m "{model_name}" '
-                    f'-k {TRIALS_PER_TASK}'
-                ),
+                execution_command=execution_command,
             ),
         ),
     )
+
+    additional_details = {
+        'agent_name': agent,
+        'agent_organization': require_identity(
+            entry.get('agent_org'),
+            f'Terminal-Bench agent organization for rank {entry.get("rank")!r}',
+        ),
+    }
+    if entry.get('reasoning_effort'):
+        additional_details['reasoning_effort'] = str(entry['reasoning_effort'])
 
     return EvaluationLog(
         schema_version=SCHEMA_VERSION,
@@ -375,7 +491,7 @@ def convert_entry(
         retrieved_timestamp=retrieved_timestamp,
         evaluation_timestamp=date,
         source_metadata=SourceMetadata(
-            source_name='Terminal-Bench 2.0',
+            source_name=f'Terminal-Bench {spec.version}',
             source_type='documentation',
             source_organization_name='Terminal-Bench',
             source_organization_url='https://www.tbench.ai',
@@ -386,14 +502,7 @@ def convert_entry(
             name=model_name,
             id=model_id,
             developer=model_org,
-            additional_details={
-                'agent_name': agent,
-                'agent_organization': require_identity(
-                    entry.get('agent_org'),
-                    f'Terminal-Bench agent organization for rank '
-                    f'{entry.get("rank")!r}',
-                ),
-            },
+            additional_details=additional_details,
         ),
         evaluation_results=[eval_result],
     )
@@ -402,14 +511,15 @@ def convert_entry(
 def convert_logs(
     entries: list[dict],
     retrieved_timestamp: str | None = None,
-    leaderboard_url: str = LEADERBOARD_URL,
+    leaderboard_url: str | None = None,
+    spec: BenchmarkVersion = TB2,
 ) -> SourceConversionResult[tuple[EvaluationLog, str, str]]:
     timestamp = retrieved_timestamp or str(time.time())
     bundles = []
     failures: list[SourceRecordFailure] = []
     for index, entry in enumerate(entries):
         try:
-            eval_log = convert_entry(entry, timestamp, leaderboard_url)
+            eval_log = convert_entry(entry, timestamp, leaderboard_url, spec)
             org_slug = get_org_slug(entry['model_org'])
             model_slug = get_model_slug(entry['model'])
         except Exception as e:
@@ -425,12 +535,12 @@ def convert_logs(
     if not bundles and not failures:
         failures.append(
             SourceRecordFailure(
-                source_ref='Terminal-Bench 2.0 input',
+                source_ref=f'Terminal-Bench {spec.version} input',
                 reason='converted 0 source records',
             )
         )
     return SourceConversionResult(
-        source_name='Terminal-Bench 2.0',
+        source_name=f'Terminal-Bench {spec.version}',
         total_records=len(entries),
         records=bundles,
         failures=failures,
@@ -440,9 +550,10 @@ def convert_logs(
 def make_logs(
     entries: list[dict],
     retrieved_timestamp: str | None = None,
-    leaderboard_url: str = LEADERBOARD_URL,
+    leaderboard_url: str | None = None,
+    spec: BenchmarkVersion = TB2,
 ) -> list[tuple[EvaluationLog, str, str]]:
-    result = convert_logs(entries, retrieved_timestamp, leaderboard_url)
+    result = convert_logs(entries, retrieved_timestamp, leaderboard_url, spec)
     result.raise_if_incomplete()
     return result.records
 
@@ -451,6 +562,7 @@ def export(
     bundles: list[tuple[EvaluationLog, str, str]],
     output_dir: str | Path,
 ) -> list[Path]:
+    """Write bundles under ``output_dir``, the collection directory."""
     return save_evaluation_logs(
         EvaluationLogOutput(
             eval_log=log,
@@ -464,42 +576,108 @@ def export(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Fetch and convert the Terminal-Bench 2.0 leaderboard.',
+        description='Fetch and convert the Terminal-Bench leaderboards.',
+    )
+    parser.add_argument(
+        '--version',
+        choices=[*VERSIONS_BY_KEY, 'all'],
+        default='all',
+        help='Which leaderboard version to convert (default: all).',
     )
     parser.add_argument(
         '--input-json',
         type=Path,
-        help='Replay a saved normalized list of leaderboard entries.',
+        help=(
+            'Replay a saved normalized list of leaderboard entries for one '
+            '--version instead of fetching.'
+        ),
     )
     parser.add_argument(
         '--save-raw-json',
         type=Path,
-        help='Save the fetched leaderboard JSON outside --output-dir.',
-    )
-    parser.add_argument(
-        '--leaderboard-url',
-        default=LEADERBOARD_URL,
-        help='Terminal-Bench leaderboard URL (for testing or source moves).',
+        help=(
+            'Save each fetched leaderboard as <version>.json in this '
+            'directory, outside --output-dir.'
+        ),
     )
     parser.add_argument(
         '--output-dir',
         type=Path,
         default=Path(OUTPUT_DIR),
-        help=f'Output directory (default: {OUTPUT_DIR}).',
+        help=(
+            'Data root; each version is written to '
+            f'<output-dir>/terminal-bench-<version>/ (default: {OUTPUT_DIR}).'
+        ),
     )
     parser.add_argument(
         '--failure-report',
         type=Path,
         help=(
-            'Write rejected source rows and reasons here. Defaults beside '
-            '--output-dir when any row fails.'
+            'Write rejected source rows and reasons here (one --version '
+            'only). Defaults beside --output-dir when any row fails.'
         ),
     )
     return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def convert_version(
+    spec: BenchmarkVersion, args: argparse.Namespace
+) -> SourceConversionResult:
+    """Fetch (or replay), convert and write one version's leaderboard."""
+    if args.input_json is not None:
+        entries = load_entries(args.input_json)
+        parsed = SourceConversionResult(
+            source_name=f'Terminal-Bench {spec.version} input JSON',
+            total_records=len(entries),
+            records=entries,
+            failures=[],
+        )
+    else:
+        try:
+            payload = fetch_leaderboard_payload(spec)
+            parsed = parse_leaderboard_payload(payload)
+        except (OSError, ValueError) as exc:
+            parsed = SourceConversionResult(
+                source_name=f'Terminal-Bench {spec.version}',
+                total_records=1,
+                records=[],
+                failures=[
+                    SourceRecordFailure(
+                        source_ref=f'{spec.package}:{spec.leaderboard}',
+                        reason=f'could not read the leaderboard: {exc}',
+                    )
+                ],
+            )
+        else:
+            if args.save_raw_json is not None:
+                save_raw_payload(
+                    payload, args.save_raw_json / f'{spec.version}.json'
+                )
+
+    converted = convert_logs(parsed.records, spec=spec)
+    result = SourceConversionResult(
+        source_name=f'Terminal-Bench {spec.version}',
+        total_records=parsed.total_records,
+        records=converted.records,
+        failures=[*parsed.failures, *converted.failures],
+        exclusions=parsed.exclusions,
+    )
+    collection_dir = args.output_dir / spec.collection
+    paths = export(result.records, collection_dir)
+    print(
+        f'Terminal-Bench {spec.version}: {len(paths)} files in {collection_dir}/'
+    )
+    if result.failures or result.exclusions:
+        report_path = save_failure_report(
+            result,
+            args.failure_report or default_failure_report_path(collection_dir),
+        )
+        print(f'Failure report: {report_path}')
+    return result
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if args.save_raw_json is not None and is_subpath(
         args.save_raw_json,
         args.output_dir,
@@ -508,40 +686,15 @@ def main() -> None:
             '--save-raw-json must point outside --output-dir so the '
             'validator cannot mistake source JSON for evaluation data'
         )
-    if args.input_json is not None:
-        entries = load_entries(args.input_json)
-        parsed = SourceConversionResult(
-            source_name='Terminal-Bench 2.0 input JSON',
-            total_records=len(entries),
-            records=entries,
-            failures=[],
-        )
-    else:
-        payload = fetch_leaderboard_payload()
-        save_raw_payload(payload, args.save_raw_json)
-        parsed = parse_leaderboard_payload(payload)
-
-    converted = convert_logs(
-        parsed.records,
-        leaderboard_url=args.leaderboard_url,
+    specs = (
+        VERSIONS if args.version == 'all' else (VERSIONS_BY_KEY[args.version],)
     )
-    result = SourceConversionResult(
-        source_name='Terminal-Bench 2.0',
-        total_records=parsed.total_records,
-        records=converted.records,
-        failures=[*parsed.failures, *converted.failures],
-        exclusions=parsed.exclusions,
-    )
-    paths = export(result.records, args.output_dir)
-    for path in paths:
-        print(path)
-    print(f'Generated {len(paths)} files in {args.output_dir}/')
-    if result.failures or result.exclusions:
-        report_path = save_failure_report(
-            result,
-            args.failure_report or default_failure_report_path(args.output_dir),
+    if len(specs) > 1 and (args.input_json or args.failure_report):
+        raise SystemExit(
+            '--input-json and --failure-report need a single --version'
         )
-        print(f'Failure report: {report_path}')
+    results = [convert_version(spec, args) for spec in specs]
+    for result in results:
         result.raise_if_incomplete()
 
 

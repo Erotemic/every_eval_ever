@@ -468,7 +468,14 @@ ADAPTERS: tuple[AdapterSpec, ...] = (
     AdapterSpec(
         key='terminal_bench_2',
         module='every_eval_ever.adapters.terminal_bench_2.adapter',
-        collections=('terminal-bench-2.0',),
+        # Every version on tbench.ai's picker; one collection each.
+        collections=(
+            'terminal-bench-2.0',
+            'terminal-bench-2.1',
+            'terminal-bench-3.0',
+            'terminal-bench-4.0',
+        ),
+        output_scope='data_root',
     ),
     AdapterSpec(
         key='vals_ai',
