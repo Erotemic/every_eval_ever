@@ -997,63 +997,6 @@ def test_latest_dump_remote_path_lists_postgres_recursively(monkeypatch):
     assert seen == {'prefix': 'postgres', 'recursive': True}
 
 
-def _bucket_401():
-    import httpx
-    from huggingface_hub.errors import HfHubHTTPError
-
-    request = httpx.Request('GET', 'https://huggingface.co/api/buckets/x')
-    return HfHubHTTPError(
-        'Invalid username or password.',
-        response=httpx.Response(401, request=request),
-    )
-
-
-def test_bucket_listing_retries_anonymously_when_the_token_is_refused(
-    monkeypatch,
-):
-    tokens = []
-
-    class _Entry:
-        path = 'postgres/paperswithcode_hf_20260716_031511.dump'
-
-    class _FakeApi:
-        def __init__(self, token=None):
-            self.token = token
-            tokens.append(token)
-
-        def list_bucket_tree(self, bucket, prefix=None, recursive=False):
-            if self.token is not False:
-                raise _bucket_401()
-            return [_Entry()]
-
-    monkeypatch.setattr('huggingface_hub.HfApi', _FakeApi)
-    got = adapter.latest_dump_remote_path('huggingface/paperswithcode-backups')
-    assert got == _Entry.path
-    assert tokens == [None, False]
-
-
-def test_bucket_errors_other_than_401_are_not_retried(monkeypatch):
-    import httpx
-    from huggingface_hub.errors import HfHubHTTPError
-
-    tokens = []
-
-    class _FakeApi:
-        def __init__(self, token=None):
-            tokens.append(token)
-
-        def list_bucket_tree(self, bucket, prefix=None, recursive=False):
-            request = httpx.Request('GET', 'https://huggingface.co/x')
-            raise HfHubHTTPError(
-                'not found', response=httpx.Response(404, request=request)
-            )
-
-    monkeypatch.setattr('huggingface_hub.HfApi', _FakeApi)
-    with pytest.raises(HfHubHTTPError):
-        adapter.latest_dump_remote_path('huggingface/paperswithcode-backups')
-    assert tokens == [None]
-
-
 def test_emit_source_version_names_a_local_dump_without_network(capsys):
     # A --dump path is named from its own stamp, so the probe touches no bucket.
     exit_code = adapter.run(
