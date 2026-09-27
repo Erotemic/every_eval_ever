@@ -87,7 +87,7 @@ re-hosting bytes that are already durably stored.
 | `openeval` | HuggingFace | Converts OpenEval response scores from `human-centered-eval/OpenEval` into `data/openeval/`; pass `--include-instances` to also write `*_samples.jsonl` sidecars. |
 | `rewardbench` | HuggingFace | Fetches RewardBench v1 (CSV) and RewardBench v2 (JSON) leaderboard data. |
 | `tau_bench` | tau2-bench leaderboard submissions (GitHub) | Converts the public tau2-bench submissions into `data/tau-bench/`: one record per model, with a Pass^k result per domain and per k, plus cost per trajectory where reported. The raw base URL is pinned to a commit and each submission's payload hash is recorded, so a record names the exact input it was built from. |
-| `terminal_bench_2` | tbench.ai | Fetches every Terminal-Bench leaderboard version (2.0, 2.1, 3.0, 4.0), one collection each. |
+| `terminal_bench` | tbench.ai | Fetches every Terminal-Bench leaderboard version (2.0, 2.1, 3.0, 4.0), one collection each. |
 | `hle` | Scale SEAL leaderboard | Converts the Scale SEAL Humanity's Last Exam leaderboard into `data/hle/`. Emits per-model accuracy (with 95% CI) and calibration error. |
 | `mmlu_pro` | TIGER-Lab leaderboard CSV | Converts the MMLU-Pro leaderboard (`TIGER-Lab/mmlu_pro_leaderboard_submission`) into `data/mmlu-pro/`. Emits per-model overall + 14 per-subject accuracies. |
 | `paperswithcode_drugbank` | Local Papers with Code PostgreSQL dump + reviewed YAML manifest | Manually converts DrugBank score cells with reviewed model, source-scale, split, and protocol semantics. The same source cell in `data/paperswithcode/` is matched by `(pwc_evaluation_id, metric_config.metric_name)`. |

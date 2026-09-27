@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from every_eval_ever.adapters.terminal_bench_2 import adapter
+from every_eval_ever.adapters.terminal_bench import adapter
 from every_eval_ever.helpers.io import SourceRecordsError
 from every_eval_ever.validate import validate_file
 
@@ -76,7 +76,7 @@ def test_rejected_entry_retains_source_provenance():
         raise AssertionError('expected invalid Terminal-Bench entry to fail')
 
 
-FIXTURES = Path(__file__).parent / 'data' / 'terminal_bench_2'
+FIXTURES = Path(__file__).parent / 'data' / 'terminal_bench'
 
 
 def _parse(name: str):
@@ -165,7 +165,7 @@ def test_newer_versions_keep_effort_trials_and_distinct_ids(tmp_path: Path):
 def test_catalog_declares_every_version_collection():
     from every_eval_ever.adapters import catalog
 
-    spec = catalog.get('terminal_bench_2')
+    spec = catalog.get('terminal_bench')
     assert spec.output_scope == 'data_root'
     assert set(spec.collections) == {
         version.collection for version in adapter.VERSIONS

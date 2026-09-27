@@ -14,7 +14,7 @@ verifier accepted. Each version is its own collection,
 ``model_info.additional_details``.
 
 Usage:
-    uv run python -m every_eval_ever.adapters.terminal_bench_2.adapter
+    uv run python -m every_eval_ever.adapters.terminal_bench.adapter
 """
 
 import argparse

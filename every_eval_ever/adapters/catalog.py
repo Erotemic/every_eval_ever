@@ -466,8 +466,8 @@ ADAPTERS: tuple[AdapterSpec, ...] = (
         ),
     ),
     AdapterSpec(
-        key='terminal_bench_2',
-        module='every_eval_ever.adapters.terminal_bench_2.adapter',
+        key='terminal_bench',
+        module='every_eval_ever.adapters.terminal_bench.adapter',
         # Every version on tbench.ai's picker; one collection each.
         collections=(
             'terminal-bench-2.0',
