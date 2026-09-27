@@ -364,6 +364,16 @@ ADAPTERS: tuple[AdapterSpec, ...] = (
         ),
     ),
     AdapterSpec(
+        key='livebench',
+        module='every_eval_ever.adapters.livebench.adapter',
+        collections=('livebench',),
+        notes=(
+            'Every release the livebench.ai release picker lists, from the '
+            'site repository; rows whose model has no modelLinks.js entry '
+            'name no organization and land in the failure report.'
+        ),
+    ),
+    AdapterSpec(
         key='mmlu_pro',
         module='every_eval_ever.adapters.mmlu_pro.adapter',
         collections=('mmlu-pro',),
