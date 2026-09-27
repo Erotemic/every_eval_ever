@@ -1104,7 +1104,9 @@ def build_model_info(
                 # model_availability. deployment_type keeps the schema's
                 # `unknown`: PwC records what the model is, never how the party
                 # reporting the number reached it.
-                'model_availability': model_availability(open_flags, repo_linked),
+                'model_availability': model_availability(
+                    open_flags, repo_linked
+                ),
             }
         ),
     )
@@ -1441,8 +1443,10 @@ def dump_version_from_path(dump_path: str | Path) -> str:
 # therefore an optional capability: the import is lazy and only this one code
 # path needs it, so `--dump` (a dump already on disk) keeps working under the
 # pinned range.
-def _require_bucket_api():
+def _require_bucket_api(token: bool | None = None):
     """Return an ``HfApi``, or exit with a clear remedy if the bucket API is absent.
+
+    ``token=False`` returns an anonymous client; ``None`` uses the ambient token.
 
     The two bucket methods land together in ``huggingface_hub>=1.0``; feature-
     detecting ``list_bucket_tree`` is more robust than parsing a version string
@@ -1464,19 +1468,38 @@ def _require_bucket_api():
             '--dump <path> to convert a dump already on disk (that path needs '
             'only pgdumplib, no bucket API).'
         )
-    return HfApi()
+    return HfApi() if token is None else HfApi(token=token)
+
+
+def _with_bucket_api(call):
+    """Run ``call(api)``, retrying once anonymously if the token is refused.
+
+    A token scoped to other repositories gets 401 on a public bucket; the
+    anonymous retry still fails loudly if the bucket really needs auth.
+    """
+    from huggingface_hub.errors import HfHubHTTPError
+
+    try:
+        return call(_require_bucket_api())
+    except HfHubHTTPError as exc:
+        response = getattr(exc, 'response', None)
+        if getattr(response, 'status_code', None) != 401:
+            raise
+    print('HF token refused (401); retrying the bucket anonymously')
+    return call(_require_bucket_api(token=False))
 
 
 def latest_dump_remote_path(bucket: str, prefix: str = 'postgres') -> str:
-    api = _require_bucket_api()
     # The dumps live under `postgres/` in the bucket; list that subtree
     # RECURSIVELY. A non-recursive top-level listing returns the `postgres` dir
     # entry (not the nested `.dump` files) and silently finds nothing.
-    dumps = [
-        f.path
-        for f in api.list_bucket_tree(bucket, prefix=prefix, recursive=True)
-        if getattr(f, 'path', '').endswith('.dump')
-    ]
+    dumps = _with_bucket_api(
+        lambda api: [
+            f.path
+            for f in api.list_bucket_tree(bucket, prefix=prefix, recursive=True)
+            if getattr(f, 'path', '').endswith('.dump')
+        ]
+    )
     if not dumps:
         raise SystemExit(
             f'no .dump files found under {prefix!r} in bucket {bucket}'
@@ -1485,15 +1508,16 @@ def latest_dump_remote_path(bucket: str, prefix: str = 'postgres') -> str:
 
 
 def download_dump(bucket: str, remote_path: str, dest_dir: Path) -> Path:
-    api = _require_bucket_api()
     dest_dir.mkdir(parents=True, exist_ok=True)
     local = dest_dir / Path(remote_path).name
     if local.exists():
         print(f'reusing cached dump {local}')
         return local
     print(f'downloading {bucket}:{remote_path} -> {local}')
-    api.download_bucket_files(
-        bucket, [(remote_path, str(local))], raise_on_missing_files=True
+    _with_bucket_api(
+        lambda api: api.download_bucket_files(
+            bucket, [(remote_path, str(local))], raise_on_missing_files=True
+        )
     )
     return local
 
