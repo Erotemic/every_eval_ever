@@ -3,6 +3,8 @@ Script to convert Terminal-Bench 2.0 leaderboard data to the EvalEval schema for
 
 Data source:
 - Terminal-Bench 2.0 leaderboard: https://www.tbench.ai/leaderboard/terminal-bench/2.0
+- JSON behind it: the Harbor ``leaderboard-read`` function the page POSTs
+  ``{"package": ..., "name": ...}`` to
 
 Terminal-Bench is an agentic coding benchmark that evaluates agent+model pairs on
 87 terminal-based tasks with 5 trials each. Each leaderboard entry represents a
@@ -15,15 +17,14 @@ Usage:
 import argparse
 import json
 import math
-import re
 import time
-from html.parser import HTMLParser
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 from every_eval_ever.eval_types import (
     AgenticEvalConfig,
     AvailableTool,
+    ConfidenceInterval,
     EvalLibrary,
     EvaluationLog,
     EvaluationResult,
@@ -43,6 +44,7 @@ from every_eval_ever.helpers import (
     SCHEMA_VERSION,
     EvaluationLogOutput,
     SourceConversionResult,
+    SourceRecordExclusion,
     SourceRecordFailure,
     default_failure_report_path,
     raw_capture,
@@ -53,6 +55,12 @@ from every_eval_ever.helpers import (
 from every_eval_ever.helpers.io import require_identity
 
 LEADERBOARD_URL = 'https://www.tbench.ai/leaderboard/terminal-bench/2.0'
+#: The endpoint tbench.ai's own leaderboard page reads.
+LEADERBOARD_API_URL = (
+    'https://ofhuhcpkvzjlejydnvyd.supabase.co/functions/v1/leaderboard-read'
+)
+LEADERBOARD_PACKAGE = 'terminal-bench/terminal-bench-2'
+LEADERBOARD_NAME = '2-0'
 OUTPUT_DIR = 'data/terminal-bench-2.0'
 TASK_COUNT = 87
 TRIALS_PER_TASK = 5
@@ -99,57 +107,47 @@ ORG_SLUG_MAP = {
 }
 
 
-class _LeaderboardTableParser(HTMLParser):
-    """Extract text cells from HTML table rows without a scraper dependency."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.rows: list[list[str]] = []
-        self._row: list[str] | None = None
-        self._cell_parts: list[str] | None = None
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        del attrs
-        if tag == 'tr':
-            self._row = []
-        elif tag == 'td' and self._row is not None:
-            self._cell_parts = []
-
-    def handle_data(self, data: str) -> None:
-        if self._cell_parts is not None:
-            self._cell_parts.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == 'td' and self._row is not None:
-            self._row.append(''.join(self._cell_parts or []).strip())
-            self._cell_parts = None
-        elif tag == 'tr' and self._row is not None:
-            self.rows.append(self._row)
-            self._row = None
-
-
-_ACCURACY_RE = re.compile(
-    r'^\s*(?P<score>\d+(?:\.\d+)?)%\s*'
-    r'(?:±\s*(?P<stderr>\d+(?:\.\d+)?|N/A))?\s*$'
-)
-
-
-def fetch_leaderboard_html(url: str = LEADERBOARD_URL) -> str:
-    """Fetch the rendered Terminal-Bench leaderboard page."""
-    request = Request(url, headers={'User-Agent': 'EEE-adapter/1.0'})
+def fetch_leaderboard_payload(
+    api_url: str = LEADERBOARD_API_URL,
+    package: str = LEADERBOARD_PACKAGE,
+    name: str = LEADERBOARD_NAME,
+) -> dict:
+    """POST the leaderboard query the tbench.ai page makes; return its JSON."""
+    request = Request(
+        api_url,
+        data=json.dumps({'package': package, 'name': name}).encode('utf-8'),
+        method='POST',
+        headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'EEE-adapter/1.0',
+        },
+    )
     with urlopen(request, timeout=60) as response:
         body = response.read()
         content_type = response.headers.get('Content-Type')
-    raw_capture.record(url=url, content=body, content_type=content_type)
-    return body.decode('utf-8', errors='strict')
+    raw_capture.record(
+        url=api_url,
+        content=body,
+        content_type=content_type,
+        label=f'{package}:{name}',
+    )
+    payload = json.loads(body)
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f'leaderboard endpoint returned {type(payload).__name__}, '
+            'expected an object'
+        )
+    return payload
 
 
-def save_raw_html(html: str, path: Path | None) -> None:
-    """Persist the exact fetched source outside the validated data tree."""
+def save_raw_payload(payload: dict, path: Path | None) -> None:
+    """Persist the fetched source outside the validated data tree."""
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(html, encoding='utf-8')
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8'
+    )
 
 
 def is_subpath(path: Path, parent: Path) -> bool:
@@ -172,81 +170,65 @@ def load_entries(path: Path) -> list[dict]:
     return entries
 
 
-def parse_leaderboard_html(
-    html: str,
-) -> SourceConversionResult[dict]:
-    """Parse table rows and retain malformed leaderboard-row provenance."""
-    parser = _LeaderboardTableParser()
-    parser.feed(html)
-    parser.close()
+def _label(value) -> str | None:
+    """A display field is either a plain string or ``{"label", "url"}``."""
+    if isinstance(value, dict):
+        value = value.get('label')
+    return value if isinstance(value, str) else None
 
+
+def parse_leaderboard_payload(payload: dict) -> SourceConversionResult[dict]:
+    """Turn published leaderboard rows into normalized entries.
+
+    Rows the leaderboard is not displaying are exclusions; a row without a
+    metadata or metrics object is a failure carrying the source row.
+    """
+    rows = payload.get('rows')
+    if not isinstance(rows, list):
+        raise ValueError('leaderboard payload has no rows list')
     entries = []
     failures: list[SourceRecordFailure] = []
-    candidate_rows = 0
-    for row_index, cells in enumerate(parser.rows):
-        rank_position = next(
-            (index for index, value in enumerate(cells) if value.isdigit()),
-            None,
-        )
-        if rank_position is None:
-            continue
-        candidate_rows += 1
-        row_ref = f'HTML leaderboard row {row_index + 1}'
-        values = cells[rank_position : rank_position + 7]
-        if len(values) != 7:
-            failures.append(
-                SourceRecordFailure(
+    exclusions: list[SourceRecordExclusion] = []
+    for index, row in enumerate(rows):
+        row_ref = f'leaderboard row {row.get("id", index)}'
+        if row.get('status') != 'display':
+            exclusions.append(
+                SourceRecordExclusion(
                     source_ref=row_ref,
-                    reason=(
-                        'leaderboard row has fewer than seven fields after '
-                        'its rank'
-                    ),
-                    source_record={'cells': cells},
+                    reason=f'not published (status {row.get("status")!r})',
+                    source_record=row,
                 )
             )
             continue
-        rank, agent, model, date, agent_org, model_org, accuracy = values
-        match = _ACCURACY_RE.fullmatch(accuracy)
-        if match is None:
+        metadata = row.get('metadata')
+        metrics = row.get('metrics')
+        if not isinstance(metadata, dict) or not isinstance(metrics, dict):
             failures.append(
                 SourceRecordFailure(
                     source_ref=row_ref,
-                    reason=f'could not parse accuracy cell {accuracy!r}',
-                    source_record={'cells': cells},
-                )
-            )
-            continue
-        score = float(match.group('score'))
-        stderr_text = match.group('stderr')
-        stderr = None if stderr_text in (None, 'N/A') else float(stderr_text)
-        if not 0.0 <= score <= 100.0:
-            failures.append(
-                SourceRecordFailure(
-                    source_ref=row_ref,
-                    reason=f'accuracy must be between 0 and 100, got {score}',
-                    source_record={'cells': cells},
+                    reason='row has no metadata or metrics object',
+                    source_record=row,
                 )
             )
             continue
         entries.append(
             {
-                'rank': int(rank),
-                'agent': agent,
-                'model': model,
-                'date': date,
-                'agent_org': agent_org,
-                'model_org': model_org,
-                'accuracy': score,
-                'stderr': stderr,
+                'rank': row.get('rank'),
+                'agent': _label(metadata.get('agent_display')),
+                'model': _label(metadata.get('model_display')),
+                'date': metadata.get('date'),
+                'agent_org': _label(metadata.get('agent_org')),
+                'model_org': _label(metadata.get('model_org')),
+                'accuracy': metrics.get('accuracy'),
+                'ci95_half_width': metrics.get('accuracy_ci95_half_width'),
             }
         )
-    if candidate_rows == 0:
-        raise ValueError('no ranked leaderboard rows found in source HTML')
     return SourceConversionResult(
-        source_name='Terminal-Bench 2.0 leaderboard HTML',
-        total_records=candidate_rows,
+        source_name='Terminal-Bench 2.0 leaderboard',
+        total_records=len(rows),
         records=entries,
         failures=failures,
+        exclusions=exclusions,
     )
 
 
@@ -302,6 +284,15 @@ def convert_entry(
             'Terminal-Bench standard error must be a finite non-negative '
             f'number, got {stderr_value!r}'
         )
+    ci_value = entry.get('ci95_half_width')
+    half_width = None if ci_value is None else float(ci_value)
+    if half_width is not None and (
+        not math.isfinite(half_width) or half_width < 0.0
+    ):
+        raise ValueError(
+            'Terminal-Bench 95% CI half-width must be a finite non-negative '
+            f'number, got {ci_value!r}'
+        )
     model_id = make_model_id(model_org, model_name)
     agent_slug = sanitize_filename(agent.lower().replace(' ', '-'))
     model_slug = get_model_slug(model_name)
@@ -311,9 +302,22 @@ def convert_entry(
     )
 
     uncertainty = None
-    if stderr is not None:
+    if stderr is not None or half_width is not None:
         uncertainty = Uncertainty(
-            standard_error=StandardError(value=stderr),
+            standard_error=(
+                None if stderr is None else StandardError(value=stderr)
+            ),
+            # The source publishes the half-width; the bounds are exactly
+            # accuracy -/+ it, not clipped to the score range.
+            confidence_interval=(
+                None
+                if half_width is None
+                else ConfidenceInterval(
+                    lower=accuracy - half_width,
+                    upper=accuracy + half_width,
+                    confidence_level=0.95,
+                )
+            ),
             num_samples=TASK_COUNT * TRIALS_PER_TASK,
         )
 
@@ -468,9 +472,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='Replay a saved normalized list of leaderboard entries.',
     )
     parser.add_argument(
-        '--save-raw-html',
+        '--save-raw-json',
         type=Path,
-        help='Save the fetched leaderboard HTML outside --output-dir.',
+        help='Save the fetched leaderboard JSON outside --output-dir.',
     )
     parser.add_argument(
         '--leaderboard-url',
@@ -496,13 +500,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.save_raw_html is not None and is_subpath(
-        args.save_raw_html,
+    if args.save_raw_json is not None and is_subpath(
+        args.save_raw_json,
         args.output_dir,
     ):
         raise SystemExit(
-            '--save-raw-html must point outside --output-dir so the '
-            'validator cannot mistake source HTML for evaluation data'
+            '--save-raw-json must point outside --output-dir so the '
+            'validator cannot mistake source JSON for evaluation data'
         )
     if args.input_json is not None:
         entries = load_entries(args.input_json)
@@ -513,9 +517,9 @@ def main() -> None:
             failures=[],
         )
     else:
-        html = fetch_leaderboard_html(args.leaderboard_url)
-        save_raw_html(html, args.save_raw_html)
-        parsed = parse_leaderboard_html(html)
+        payload = fetch_leaderboard_payload()
+        save_raw_payload(payload, args.save_raw_json)
+        parsed = parse_leaderboard_payload(payload)
 
     converted = convert_logs(
         parsed.records,
@@ -526,12 +530,13 @@ def main() -> None:
         total_records=parsed.total_records,
         records=converted.records,
         failures=[*parsed.failures, *converted.failures],
+        exclusions=parsed.exclusions,
     )
     paths = export(result.records, args.output_dir)
     for path in paths:
         print(path)
     print(f'Generated {len(paths)} files in {args.output_dir}/')
-    if result.failures:
+    if result.failures or result.exclusions:
         report_path = save_failure_report(
             result,
             args.failure_report or default_failure_report_path(args.output_dir),

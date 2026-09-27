@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from every_eval_ever.adapters.terminal_bench_2 import adapter
@@ -75,20 +76,50 @@ def test_rejected_entry_retains_source_provenance():
         raise AssertionError('expected invalid Terminal-Bench entry to fail')
 
 
-def test_html_parser_uses_live_table_shape_and_keeps_bad_rows():
-    html = """
-    <table><tbody>
-      <tr><td><input></td><td>1</td><td>Example Agent</td>
-          <td>GPT-5</td><td>2026-01-01</td><td>Example Org</td>
-          <td>OpenAI</td><td>50.0%± 2.0</td></tr>
-      <tr><td><input></td><td>2</td><td>Bad Agent</td>
-          <td>GPT-5</td><td>2026-01-01</td><td>Example Org</td>
-          <td>OpenAI</td><td>unknown</td></tr>
-    </tbody></table>
-    """
+FIXTURE = (
+    Path(__file__).parent / 'data' / 'terminal_bench_2' / 'leaderboard.json'
+)
 
-    result = adapter.parse_leaderboard_html(html)
 
-    assert result.records == [_entry()]
-    assert len(result.failures) == 1
-    assert result.failures[0].source_record['cells'][-1] == 'unknown'
+def test_payload_rows_become_entries_and_hidden_rows_are_excluded():
+    payload = json.loads(FIXTURE.read_text(encoding='utf-8'))
+
+    result = adapter.parse_leaderboard_payload(payload)
+
+    assert result.total_records == 3
+    assert not result.failures
+    assert len(result.exclusions) == 1
+    assert "'hidden'" in result.exclusions[0].reason
+    first, second = result.records
+    assert first == {
+        'rank': 1,
+        'agent': 'NexAU-AHE',
+        'model': 'GPT-5.5',
+        'date': '2026-04-23',
+        'agent_org': 'china-qijizhifeng',
+        'model_org': 'OpenAI',
+        'accuracy': 84.7191011236,
+        'ci95_half_width': 2.0892351283,
+    }
+    # a row published "± N/A" carries no half-width
+    assert second['ci95_half_width'] is None
+
+
+def test_published_half_width_is_a_95_percent_interval(tmp_path: Path):
+    payload = json.loads(FIXTURE.read_text(encoding='utf-8'))
+    entries = adapter.parse_leaderboard_payload(payload).records
+
+    bundles = adapter.make_logs(entries, retrieved_timestamp='1234567890.0')
+
+    with_ci = bundles[0][0].evaluation_results[0].score_details
+    interval = with_ci.uncertainty.confidence_interval
+    assert with_ci.uncertainty.standard_error is None
+    assert interval.confidence_level == 0.95
+    assert interval.lower == 84.7191011236 - 2.0892351283
+    assert interval.upper == 84.7191011236 + 2.0892351283
+    assert bundles[1][0].evaluation_results[0].score_details.uncertainty is None
+    for path in adapter.export(
+        bundles, tmp_path / 'data' / 'terminal-bench-2.0'
+    ):
+        report = validate_file(path)
+        assert report.valid, report.errors
