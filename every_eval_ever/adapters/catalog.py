@@ -407,9 +407,12 @@ ADAPTERS: tuple[AdapterSpec, ...] = (
         weekday=6,
         timeout_minutes=45,
         with_packages=('pgdumplib',),
+        # The bucket is private; the runner strips HF_TOKEN from adapters.
+        required_env=('PAPERSWITHCODE_HF_TOKEN',),
         notes=(
             'Converts the whole Papers with Code postgres dump from the '
-            'huggingface/paperswithcode-backups bucket, which needs '
+            'private huggingface/paperswithcode-backups bucket, read with '
+            'PAPERSWITHCODE_HF_TOKEN, which needs '
             'huggingface_hub>=1.0 for the bucket API. --best-effort keeps '
             'imperfect rows flagged instead of aborting the run; the dropped '
             'rows land in the failure report, which the runner reads as '
