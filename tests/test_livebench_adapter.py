@@ -248,6 +248,30 @@ def test_refresh_pins_only_existing_namespaced_canonicals(monkeypatch):
     assert pinned['_meta']['n_resolved'] == 1
 
 
+def test_release_is_preserved_without_inventing_evaluation_dates(
+    converted, tmp_path
+):
+    paths = adapter.export(
+        converted.records, tmp_path / 'data' / adapter.COLLECTION
+    )
+
+    for path in paths:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        # A model can be evaluated on a benchmark released before it existed.
+        # The source names the benchmark version, not the evaluation date.
+        assert 'evaluation_timestamp' not in payload
+        assert payload['retrieved_timestamp'] == '1234567890.0'
+        assert payload['eval_library']['version'] == '2026-01-08'
+        assert payload['source_metadata']['additional_details']['release'] == (
+            '2026-01-08'
+        )
+        for result in payload['evaluation_results']:
+            assert 'evaluation_timestamp' not in result
+            assert result['source_data']['additional_details']['release'] == (
+                '2026-01-08'
+            )
+
+
 def test_records_validate_at_their_datastore_path(converted, tmp_path):
     paths = adapter.export(
         converted.records, tmp_path / 'data' / adapter.COLLECTION

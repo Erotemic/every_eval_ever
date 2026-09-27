@@ -232,7 +232,6 @@ def _result(
             url=[DATASET_URL],
             additional_details={'release': release},
         ),
-        evaluation_timestamp=release,
         metric_config=MetricConfig(
             evaluation_description=description,
             metric_id='accuracy',
@@ -367,7 +366,6 @@ def convert_row(
         schema_version=SCHEMA_VERSION,
         evaluation_id=f'{COLLECTION}/{release}/{model}',
         retrieved_timestamp=retrieved_timestamp,
-        evaluation_timestamp=release,
         source_metadata=SourceMetadata(
             source_name=f'LiveBench {release}',
             source_type='documentation',
