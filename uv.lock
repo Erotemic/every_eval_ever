@@ -926,7 +926,7 @@ provides-extras = ["inspect", "helm", "paperswithcode", "wild", "all"]
 
 [package.metadata.requires-dev]
 cron = [
-    { name = "datasets" },
+    { name = "datasets", specifier = ">=3.6.0" },
     { name = "pgdumplib", specifier = ">=4.0.0" },
     { name = "pyarrow", specifier = ">=14.0" },
 ]
