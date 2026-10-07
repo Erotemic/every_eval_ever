@@ -5,7 +5,9 @@ import hashlib
 import json
 from pathlib import Path
 
-from every_eval_ever.converters.common.publication import publish_evaluation_logs
+from every_eval_ever.converters.common.publication import (
+    publish_evaluation_logs,
+)
 from every_eval_ever.converters.lm_eval.adapter import LMEvalAdapter
 from every_eval_ever.converters.lm_eval.instance_level_adapter import (
     LMEvalInstanceLevelAdapter,
@@ -67,7 +69,10 @@ def test_publisher_compresses_final_samples_and_updates_pointer(tmp_path: Path):
     detail = aggregate['detailed_evaluation_results']
     assert detail['file_path'].endswith(f'{FILE_UUID}_samples.jsonl.gz')
     sample_path = aggregate_path.with_name(f'{FILE_UUID}_samples.jsonl.gz')
-    assert detail['checksum'] == hashlib.sha256(sample_path.read_bytes()).hexdigest()
+    assert (
+        detail['checksum']
+        == hashlib.sha256(sample_path.read_bytes()).hexdigest()
+    )
     with gzip.open(sample_path, 'rt', encoding='utf-8') as file:
         rows = [json.loads(line) for line in file if line.strip()]
     assert len(rows) == detail['total_rows']
