@@ -36,6 +36,21 @@ def test_stdlib_codec_roundtrip(tmp_path: Path, codec: str):
     assert json.loads(eee_io.read_eee_text(path)) == payload
 
 
+def test_gzip_compression_is_deterministic():
+    payload = b'deterministic checksum input\n'
+    first = eee_io.compress_bytes(payload, 'gz')
+    second = eee_io.compress_bytes(payload, 'gz')
+    assert first == second
+    assert first[4:8] == b'\x00\x00\x00\x00'
+    assert first[9] == 255
+
+
+def test_missing_compressed_file_stays_an_io_error(tmp_path: Path):
+    path = tmp_path / 'missing.json.gz'
+    with pytest.raises(FileNotFoundError):
+        eee_io.read_eee_text(path)
+
+
 def test_duplicate_variants(tmp_path: Path):
     plain = tmp_path / 'x.json'
     compressed = tmp_path / 'x.json.gz'
@@ -50,6 +65,18 @@ def test_duplicate_variants(tmp_path: Path):
 @pytest.mark.parametrize('codec', ['gz', 'bz2', 'xz'])
 def test_corrupt_stdlib_stream_is_normalized(tmp_path: Path, codec: str):
     path = tmp_path / f'x.json.{codec}'
+    path.write_bytes(b'not-a-valid-stream')
+    with pytest.raises(eee_io.CompressedReadError):
+        eee_io.read_eee_text(path)
+
+
+def test_corrupt_lz4_stream_is_normalized(tmp_path: Path):
+    try:
+        eee_io.compress_bytes(b'codec probe', 'lz4')
+    except eee_io.CodecUnavailableError:
+        pytest.skip('lz4 codec extra is not installed')
+
+    path = tmp_path / 'x.json.lz4'
     path.write_bytes(b'not-a-valid-stream')
     with pytest.raises(eee_io.CompressedReadError):
         eee_io.read_eee_text(path)

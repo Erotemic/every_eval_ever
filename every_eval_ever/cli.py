@@ -23,23 +23,30 @@ from every_eval_ever.helpers.io import (
 )
 
 
-def _resolved_compression(args: argparse.Namespace, kind: str) -> str:
-    """Resolve compression without requiring parser-created Namespaces."""
+def _resolved_compression(
+    args: argparse.Namespace, kind: eee_io.ResultKind
+) -> eee_io.Compression:
+    """Resolve one output kind, including hand-built legacy Namespaces."""
     if kind == 'aggregate':
         override = getattr(args, 'compress_aggregate', None)
     elif kind == 'samples':
         override = getattr(args, 'compress_samples', None)
     else:
         raise ValueError(f'unsupported result kind: {kind!r}')
-    shared = getattr(args, 'compress', eee_io.COMPRESSION_NONE)
-    return override if override is not None else shared
+
+    compression = (
+        override
+        if override is not None
+        else getattr(args, 'compress', eee_io.COMPRESSION_NONE)
+    )
+    return eee_io.normalize_compression(compression)
 
 
 def _publication_compression_kwargs(
     args: argparse.Namespace,
-) -> dict[str, str]:
+) -> dict[str, eee_io.Compression]:
     """Return only non-default publisher compression overrides."""
-    kwargs: dict[str, str] = {}
+    kwargs: dict[str, eee_io.Compression] = {}
     aggregate = _resolved_compression(args, 'aggregate')
     samples = _resolved_compression(args, 'samples')
     if aggregate != eee_io.COMPRESSION_NONE:
@@ -400,6 +407,10 @@ def _cmd_convert_helm(args: argparse.Namespace) -> int:
     return 0
 
 
+#: What ``convert alpaca_eval`` writes to when no ``--output_dir`` is given. A
+#: marker, not the directory itself: it is resolved per run (see
+#: :func:`_cmd_convert_alpaca_eval`), and building the parser must not create
+#: anything on disk.
 SMOKE_OUTPUT_DIR = str(
     Path(tempfile.gettempdir()) / 'alpaca-eval-smoke' / 'data'
 )
@@ -425,12 +436,18 @@ def _cmd_convert_alpaca_eval(args: argparse.Namespace) -> int:
     )
     print(f'eval-card-registry: {registry.status()}')
     if registry.enabled and gaps():
+        # Surfaced every run: a missing canonical is a registry-side follow-up,
+        # and it silently shapes the ids in the output until someone files it.
         print('  no canonical entry for: ' + ', '.join(gaps()))
     adapter = AlpacaEvalAdapter(
         ref=args.ref, snapshot=snapshot, registry=registry
     )
     versions = [args.version] if args.version else list(LEADERBOARDS.keys())
     if args.output_dir == SMOKE_OUTPUT_DIR:
+        # Records are named with a fresh UUID per run, so a fixed throwaway
+        # directory accumulates earlier runs' output and a reader cannot tell
+        # which files this run produced. One directory per run instead of
+        # deleting: a smoke run is worth looking at.
         output_dir = Path(tempfile.mkdtemp(prefix='alpaca-eval-smoke-')) / 'data'
         print(f'No --output_dir given; writing throwaway output to {output_dir}')
     else:
@@ -506,6 +523,8 @@ def _cmd_convert_alpaca_eval(args: argparse.Namespace) -> int:
             eval_uuids.append(str(uuid.uuid4()))
 
     if registry.live:
+        # The line printed before conversion cannot carry these: no lookup has
+        # happened yet. `live_error` is sticky, so it reports the run, not a call.
         print(
             f'\neval-card-registry live lookups: {registry.live_queries} '
             f'queries, {registry.live_hits} resolved'
@@ -694,6 +713,12 @@ def build_parser() -> argparse.ArgumentParser:
             from every_eval_ever.converters.alpaca_eval.upstream import (
                 DEFAULT_UPSTREAM_REF,
             )
+
+            # This source fetches from the network rather than from a local log,
+            # so a plain `convert alpaca_eval` would otherwise write a data/
+            # tree into whatever directory it was run from. Default to a temp
+            # path so a smoke run is throwaway; publishing is opt-in via
+            # --output_dir.
             source_parser.set_defaults(output_dir=SMOKE_OUTPUT_DIR)
             source_parser.add_argument(
                 '--version',
@@ -718,8 +743,9 @@ def build_parser() -> argparse.ArgumentParser:
                 '--save-raw-json',
                 default=None,
                 help=(
-                    'Write the fetched upstream artefacts to this JSON file '
-                    'so the conversion can be replayed offline.'
+                    'Write the fetched upstream artefacts (leaderboard CSVs, '
+                    'judge configs and prompts, per-model configs) to this JSON '
+                    'file so the conversion can be replayed offline.'
                 ),
             )
             source_parser.add_argument(
@@ -728,20 +754,30 @@ def build_parser() -> argparse.ArgumentParser:
                 default=None,
                 help=(
                     'Convert from a --save_raw_json snapshot instead of '
-                    'fetching from GitHub.'
+                    'fetching from GitHub. Nothing is fetched unless '
+                    '--registry_live is also given.'
                 ),
             )
             source_parser.add_argument(
                 '--no_registry_resolve',
                 '--no-registry-resolve',
                 action='store_true',
-                help='Do not resolve ids against eval-card-registry.',
+                help=(
+                    'Do not resolve organization, metric and benchmark ids '
+                    'against the eval-card-registry. Records then carry the '
+                    'source-derived spellings, marked registry_disabled.'
+                ),
             )
             source_parser.add_argument(
                 '--registry_live',
                 '--registry-live',
                 action='store_true',
-                help='Additionally query the live registry for unresolved values.',
+                help=(
+                    'Additionally query the live registry for values the '
+                    'vendored snapshot cannot place. Uses mode=exact, which '
+                    'resolves without creating draft canonicals. Never fatal: '
+                    'a failure falls back to the snapshot.'
+                ),
             )
 
         if source == 'lm_eval':
@@ -797,6 +833,7 @@ def main(argv: list[str] | None = None) -> int:
         from every_eval_ever.validator.check_duplicate_entries import (
             main as check_duplicates_main,
         )
+
         return check_duplicates_main(args.paths)
 
     if args.command == 'convert':

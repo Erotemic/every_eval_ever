@@ -27,7 +27,7 @@ from every_eval_ever.validator.json_utils import (
 
 DEFAULT_MAX_ERRORS = 50
 
-_EXPECTED_PATH_PARTS = 5
+_EXPECTED_PATH_PARTS = 5  # data / benchmark / developer / model / filename
 _UUID_RE = (
     r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 )
@@ -38,7 +38,10 @@ _DEPLOYMENT_TYPES = ('self_deployed', 'externally_managed', 'unknown')
 _MODEL_AVAILABILITY_TYPES = ('open_weights', 'closed_weights', 'unknown')
 _INVALID_PATH_COMPONENT_CHARS = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
-    'CON', 'PRN', 'AUX', 'NUL',
+    'CON',
+    'PRN',
+    'AUX',
+    'NUL',
     *(f'COM{index}' for index in range(1, 10)),
     *(f'LPT{index}' for index in range(1, 10)),
 }
@@ -174,6 +177,7 @@ def _json_error_details(
 def check_path_structure(repo_path: str) -> list[str]:
     """Enforce aggregate and instance datastore paths."""
     parts = repo_path.split('/')
+
     if len(parts) != _EXPECTED_PATH_PARTS:
         return [
             'Unexpected path depth: expected '
@@ -181,6 +185,7 @@ def check_path_structure(repo_path: str) -> list[str]:
             "'data/benchmark/developer/model/uuid_samples.jsonl', "
             f"got {len(parts)} components in '{repo_path}'"
         ]
+
     if (
         repo_path.startswith('/')
         or '\\' in repo_path
@@ -190,8 +195,10 @@ def check_path_structure(repo_path: str) -> list[str]:
             'Path must be a clean repository-relative path without empty, '
             f"current, or parent components: '{repo_path}'"
         ]
+
     if parts[0] != 'data':
         return [f"Path does not start with 'data/': '{repo_path}'"]
+
     reserved_components = [
         component for component in parts[1:4] if component == 'data'
     ]
@@ -200,6 +207,7 @@ def check_path_structure(repo_path: str) -> list[str]:
             'Collection, developer, and model path components cannot use '
             f"the reserved datastore name 'data': '{repo_path}'"
         ]
+
     for component in parts[1:4]:
         if (
             _INVALID_PATH_COMPONENT_CHARS.search(component)
@@ -211,6 +219,7 @@ def check_path_structure(repo_path: str) -> list[str]:
                 'portable filesystem names; got '
                 f'{component!r} in {repo_path!r}'
             ]
+
     filename = parts[4]
     logical_filename = eee_io.strip_compression_suffix(filename).name
     if not (
@@ -222,6 +231,7 @@ def check_path_structure(repo_path: str) -> list[str]:
             f"'{{UUID4}}_samples.jsonl', optionally followed by a supported "
             f"compression suffix, in '{repo_path}'"
         ]
+
     return []
 
 
@@ -234,11 +244,13 @@ def resolve_companion_repo_path(
         return None
     if not isinstance(detail, dict):
         raise ValueError('detailed_evaluation_results must be an object')
+
     reference = detail.get('file_path')
     if not isinstance(reference, str) or not reference.strip():
         raise ValueError(
             'detailed_evaluation_results.file_path: missing or blank companion path'
         )
+
     aggregate_path = PurePosixPath(
         eee_io.strip_compression_suffix_text(repo_path)
     )
@@ -256,6 +268,7 @@ def resolve_companion_repo_path(
             'so the aggregate and samples share one UUID and folder, got '
             f'{reference!r}'
         )
+
     return normalized_reference
 
 
@@ -306,6 +319,7 @@ def _compare_aggregate_and_samples(
 ) -> list[str]:
     if not samples.content_valid:
         return []
+
     errors: list[str] = []
     if samples.line_count == 0:
         errors.append('samples companion must contain at least one JSONL row')
@@ -319,6 +333,7 @@ def _compare_aggregate_and_samples(
             f'evaluation_id {expected_evaluation_id!r}; got '
             f'{sorted(unexpected_evaluation_ids)!r}'
         )
+
     model_info = aggregate_data.get('model_info')
     expected_model_id = (
         model_info.get('id') if isinstance(model_info, dict) else None
@@ -331,6 +346,7 @@ def _compare_aggregate_and_samples(
             'samples model_id values must match the aggregate model_info.id '
             f'{expected_model_id!r}; got {sorted(unexpected_model_ids)!r}'
         )
+
     detail = aggregate_data.get('detailed_evaluation_results')
     total_rows = detail.get('total_rows') if isinstance(detail, dict) else None
     if isinstance(total_rows, int) and total_rows != samples.line_count:
@@ -365,12 +381,14 @@ def check_companion_exists(
                 f'samples file {physical_variants[0]!r} exists'
             ]
         return []
+
     try:
         resolved_text = resolve_companion_repo_path(repo_path, aggregate_data)
     except ValueError as exc:
         return [str(exc)]
     if resolved_text is None:
         return []
+
     errors: list[str] = []
     for path_error in check_path_structure(resolved_text):
         errors.append(
@@ -383,6 +401,7 @@ def check_companion_exists(
             'detailed_evaluation_results.format must be exactly '
             f"'jsonl', got {declared_format!r}"
         )
+
     if resolved_text not in available_files:
         errors.append(
             'detailed_evaluation_results.file_path: referenced companion '
@@ -436,6 +455,7 @@ def check_instance_companion(
             f'sibling aggregate {aggregate_path!r} could not be checked '
             'because no repository file reader was provided'
         ]
+
     try:
         aggregate_data = strict_json_loads(read_repo_file(aggregate_path))
     except (OSError, json.JSONDecodeError, StrictJSONError) as exc:
@@ -446,6 +466,7 @@ def check_instance_companion(
         return [
             f'sibling aggregate {aggregate_path!r} must contain a JSON object'
         ]
+
     detail = aggregate_data.get('detailed_evaluation_results')
     if detail is None:
         return [
@@ -463,6 +484,7 @@ def check_instance_companion(
             f'sibling aggregate {aggregate_path!r} does not point to '
             f'this samples file {repo_path!r}'
         ]
+
     errors: list[str] = []
     if isinstance(detail, dict) and detail.get('format') != 'jsonl':
         errors.append(
@@ -479,6 +501,7 @@ def check_score_metadata(data: dict[str, Any]) -> list[str]:
     results = data.get('evaluation_results')
     if not isinstance(results, list):
         return warnings
+
     for index, result in enumerate(results):
         if not isinstance(result, dict):
             continue
@@ -492,6 +515,7 @@ def check_score_metadata(data: dict[str, Any]) -> list[str]:
             warnings.append(
                 f"evaluation_results[{index}].metric_config: invalid 'score_type'"
             )
+
         raw_lo = metric.get('min_score')
         raw_hi = metric.get('max_score')
         lo = _metric_bound(raw_lo)
@@ -506,6 +530,7 @@ def check_score_metadata(data: dict[str, Any]) -> list[str]:
                     f'evaluation_results[{index}].metric_config: missing or '
                     f"invalid '{key}'"
                 )
+
         score_details = result.get('score_details')
         if not isinstance(score_details, dict):
             continue
@@ -563,7 +588,7 @@ def _is_finite_number(value: Any) -> bool:
 
 
 def _metric_bound(value: Any) -> float | None:
-    """Return a comparable metric bound, including strict-JSON infinity."""
+    """Return a comparable metric bound, including the strict-JSON infinity form."""
     if value == 'Infinity':
         return math.inf
     if value == '-Infinity':
@@ -580,24 +605,53 @@ def _metric_bound(value: Any) -> float | None:
 def check_model_identity_path(
     repo_path: str, data: dict[str, Any]
 ) -> list[str]:
-    """Warn when a record's identity and its directory address different models."""
+    """Warn when a record's identity and its directory address different models.
+
+    ``data/<collection>/<developer>/<model>/`` is how the datastore is queried,
+    so a reader who looks up a model by path finds only the records filed under
+    the spelling they guessed. When ``model_info`` addresses one directory and
+    the file sits in another, the same model is two models to every consumer.
+    Nothing reports it today: the path check only looks at the path's shape, and
+    the record is perfectly valid where it sits.
+
+    An identity that names no directory at all — a blank id, a flat id with no
+    ``developer``, a developer of ``unknown``, a name that is not a portable
+    path component — is the same disagreement seen from the other side, and is
+    reported with the reason :func:`datastore_path_components` gives.
+
+    The message names both directories and asks for agreement without saying
+    which side moves: the published datastore mixes cased and lowercase
+    spellings for developers and models alike, so a per-file check has no
+    convention to appeal to. Warnings, not errors, because already-published
+    records would fail.
+    """
     if check_path_structure(repo_path):
-        return []
+        return []  # the path-structure check already reported this path
     model_info = data.get('model_info')
     if not isinstance(model_info, dict):
         return []
     model_id = model_info.get('id')
     if not isinstance(model_id, str):
-        return []
+        return []  # a non-string id is a schema error
     stated_developer = model_info.get('developer')
     if (
         '/' not in model_id
         and stated_developer is not None
         and not isinstance(stated_developer, str)
     ):
+        # Only a flat id reads this field, and a non-string value is already a
+        # schema error — one this check would restate as "developer is
+        # required" about a populated field.
         return []
+
     collection, developer, model = repo_path.split('/')[1:4]
     try:
+        # Ask the publisher where this identity files, so the check cannot
+        # drift from datastore_output_dir. Only the developer and model
+        # components are compared, so a placeholder stands in for the
+        # collection: a collection directory the publisher would refuse is not
+        # this check's finding, and reporting it under model_info would send
+        # the reader to the wrong field.
         _, expected_developer, expected_model = datastore_path_components(
             'collection', model_id, stated_developer
         )
@@ -621,7 +675,13 @@ def check_model_identity_path(
 
 
 def check_model_deployment(data: dict[str, Any]) -> list[str]:
-    """Require independent deployment-control and weight-availability axes."""
+    """Require independent deployment-control and weight-availability axes.
+
+    ``deployment_type`` describes who controlled the inference deployment;
+    ``model_availability`` describes whether model weights are available.
+    Neither value constrains the other. This rule deliberately performs no
+    provider-specific existence check.
+    """
     warnings: list[str] = []
 
     def check_one(model_info: Any, location: str) -> None:
@@ -639,8 +699,10 @@ def check_model_deployment(data: dict[str, Any]) -> list[str]:
         elif deployment_type not in _DEPLOYMENT_TYPES:
             warnings.append(
                 f'{location}.additional_details.deployment_type: expected '
-                f'one of {list(_DEPLOYMENT_TYPES)}, got {deployment_type!r}'
+                f'one of {list(_DEPLOYMENT_TYPES)}, got '
+                f'{deployment_type!r}'
             )
+
         availability = details.get('model_availability')
         if availability is None:
             warnings.append(
@@ -856,21 +918,28 @@ def validate_aggregate(
     ) as exc:
         _append_file_read_error(report, exc)
         return report
+
     try:
         loaded = strict_json_loads(raw)
     except (json.JSONDecodeError, StrictJSONError) as exc:
         location, message = _json_error_details(exc)
         report.valid = False
         report.errors.append(
-            {'loc': location, 'msg': message, 'type': 'json_parse_error'}
+            {
+                'loc': location,
+                'msg': message,
+                'type': 'json_parse_error',
+            }
         )
         return report
+
     data = loaded if isinstance(loaded, dict) else None
     try:
         EvaluationLog.model_validate(loaded)
     except ValidationError as exc:
         report.valid = False
         report.errors = pydantic_errors_to_dicts(exc)
+
     if run_semantic_checks:
         if repo_path is None:
             report.valid = False
@@ -907,6 +976,7 @@ def validate_aggregate(
                     'type': 'semantic_check_error',
                 }
             )
+
     return report
 
 
@@ -917,7 +987,17 @@ def _validate_instance_line(
         data = strict_json_loads(line)
     except (json.JSONDecodeError, StrictJSONError) as exc:
         location, message = _json_error_details(exc, line_num=line_num)
-        return ([{'loc': location, 'msg': message, 'type': 'json_parse_error'}], None)
+        return (
+            [
+                {
+                    'loc': location,
+                    'msg': message,
+                    'type': 'json_parse_error',
+                }
+            ],
+            None,
+        )
+
     try:
         InstanceLevelEvaluationLog.model_validate(data)
     except ValidationError as exc:
@@ -925,6 +1005,7 @@ def _validate_instance_line(
         for error in errors:
             error['loc'] = f'line {line_num} -> {error["loc"]}'
         return errors, data if isinstance(data, dict) else None
+
     return [], data if isinstance(data, dict) else None
 
 
@@ -941,6 +1022,7 @@ def validate_instance_file(
     report = ValidationReport(
         file_path=file_path, valid=True, file_type='instance'
     )
+
     evaluation_ids: set[str] = set()
     model_ids: set[str] = set()
     content_valid = True
@@ -951,6 +1033,7 @@ def validate_instance_file(
             stripped = line.strip()
             if not stripped:
                 continue
+
             report.line_count += 1
             line_errors, data = _validate_instance_line(stripped, line_num)
             if data is not None:
@@ -960,6 +1043,7 @@ def validate_instance_file(
                 model_ids.add(_summary_identifier(data.get('model_id')))
             if not line_errors:
                 continue
+
             report.valid = False
             content_valid = False
             remaining = max_errors - len(report.errors)
@@ -1003,6 +1087,7 @@ def validate_instance_file(
         model_ids=frozenset(model_ids),
         content_valid=content_valid,
     )
+
     if run_semantic_checks:
         if repo_path is None:
             report.valid = False
@@ -1039,6 +1124,7 @@ def validate_instance_file(
                     'type': 'semantic_check_error',
                 }
             )
+
     return report
 
 
@@ -1070,6 +1156,7 @@ def validate_file(
             read_repo_file=read_repo_file,
             run_semantic_checks=run_semantic_checks,
         )
+
     report = ValidationReport(
         file_path=file_path, valid=False, file_type='unsupported'
     )

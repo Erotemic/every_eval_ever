@@ -43,6 +43,7 @@ def annotate_error(file_path: str, message: str, **kwargs) -> None:
 
 def normalize_list(items: List[Any]) -> List[Any]:
     normalized_items = [strip_ignored_keys(item) for item in items]
+    # Sort to avoid false negatives when scrapers emit the same items in different orders.
     return sorted(
         normalized_items,
         key=lambda item: json.dumps(
@@ -76,7 +77,10 @@ def normalized_hash(payload: Dict[str, Any]) -> str:
 
 def _report_read_error(file_path: str, exc: Exception) -> None:
     message = f'{type(exc).__name__}: {exc}'
-    annotate_error(file_path, message, title=type(exc).__name__)
+    annotation = {'title': type(exc).__name__}
+    if isinstance(exc, json.JSONDecodeError):
+        annotation.update(line=exc.lineno, col=exc.colno)
+    annotate_error(file_path, message, **annotation)
     print(file_path)
     print('  ' + message)
     print()
@@ -88,7 +92,10 @@ def main(argv: List[str] | None = None) -> int:
         description='Detects duplicate evaluation entries ignoring scrape timestamp fields.',
     )
     parser.add_argument(
-        'paths', nargs='+', type=str, help='File or folder paths to JSON data'
+        'paths',
+        nargs='+',
+        type=str,
+        help='Aggregate EEE result files or directories to scan',
     )
     args = parser.parse_args(argv)
 
@@ -100,7 +107,7 @@ def main(argv: List[str] | None = None) -> int:
         parser.error('no aggregate EEE result files were found')
 
     print()
-    print(f'Checking {len(file_paths)} JSON files for duplicates...')
+    print(f'Checking {len(file_paths)} aggregate result files for duplicates...')
     print()
 
     had_error = False
@@ -129,6 +136,14 @@ def main(argv: List[str] | None = None) -> int:
         ) as exc:
             had_error = True
             _report_read_error(file_path, exc)
+            continue
+
+        if not isinstance(payload, dict):
+            had_error = True
+            _report_read_error(
+                file_path,
+                ValueError('aggregate result must contain a JSON object'),
+            )
             continue
 
         entry_hash = normalized_hash(payload)

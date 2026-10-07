@@ -50,7 +50,15 @@ def _output_dir(
 
 
 def _reject_base_below_data(base_dir: Path, output_dir: Path) -> None:
-    """Refuse a *base_dir* that is a child of a ``data`` directory."""
+    """Refuse a *base_dir* that is a child of a ``data`` directory.
+
+    Every path this publisher writes is ``data/<collection>/<dev>/<model>/``, so
+    a base one level inside ``data`` publishes one level too deep whatever it is
+    named — the caller having passed ``data/<collection>``, the convention
+    ``EvaluationLogOutput`` uses, or a directory whose name is not the
+    collection being published at all. A scratch root outside ``data`` still
+    publishes, even one that shares a collection's name.
+    """
     if base_dir.parent.name == 'data':
         raise ValueError(
             f'base_output_dir {base_dir}/ is inside a datastore data/ '
@@ -75,7 +83,7 @@ def _prepare_sample_artifact(
     output_dir: Path,
     staged_output_dir: Path | None,
     collection_override: str | None,
-    compression: str,
+    compression: eee_io.Compression,
 ) -> _PreparedArtifact | None:
     detailed = log.detailed_evaluation_results
     if detailed is None:
@@ -137,8 +145,8 @@ def _prepare_sample_artifact(
             )
         if row.model_id != log.model_info.id:
             raise ValueError(
-                f'sample row {line_number} model_id does not match '
-                'the aggregate'
+                f'sample row {line_number} model_id does not match the '
+                'aggregate'
             )
 
     algorithm = getattr(
@@ -181,15 +189,30 @@ def publish_evaluation_logs(
     *,
     staged_output_dir: str | Path | None = None,
     collection_override: str | None = None,
-    aggregate_compression: str = eee_io.COMPRESSION_NONE,
-    samples_compression: str = eee_io.COMPRESSION_NONE,
+    aggregate_compression: eee_io.Compression = eee_io.COMPRESSION_NONE,
+    samples_compression: eee_io.Compression = eee_io.COMPRESSION_NONE,
 ) -> list[Path]:
     """Validate and atomically publish a converter batch.
+
+    All aggregate and instance-level artifacts are prepared and preflighted
+    before any destination file is created. Any publication failure removes
+    only files successfully created by this call.
+
+    ``base_output_dir`` is the **``data``** directory, not a collection
+    directory: the collection comes from ``collection_override`` or from
+    ``evaluation_results[0].source_data.dataset_name``, and the final path is
+    ``base_output_dir/<collection>/<developer>/<model>/<uuid>.json``.
+    ``EvaluationLogOutput.base_dir`` and ``default_failure_report_path`` take
+    the opposite convention, ``data/<collection>``.
 
     Converter adapters always stage ordinary UTF-8 JSON/JSONL. Compression is
     a publication concern: this function optionally compresses the final bytes,
     updates the aggregate's companion path/checksum to describe those bytes,
     then preflights and writes the whole batch atomically.
+
+    Raises:
+        ValueError: If *base_output_dir* is a child of a ``data`` directory,
+            which would publish one level too deep whatever it is named.
     """
     aggregate_compression = eee_io.normalize_compression(
         aggregate_compression
@@ -209,7 +232,7 @@ def publish_evaluation_logs(
     )
     prepared: list[_PreparedArtifact] = []
     aggregate_paths: list[Path] = []
-    planned_keys: set[tuple[Path, str, str]] = set()
+    planned_keys: set[eee_io.ResultKey] = set()
     route_owners: dict[Path, tuple[str, str]] = {}
 
     for raw_log, file_uuid in zip(logs, file_uuids):
@@ -263,14 +286,13 @@ def publish_evaluation_logs(
             key = eee_io.logical_result_key(artifact.path)
             if key is None:
                 raise AssertionError(f'not an EEE result path: {artifact.path}')
-            key_tuple = (key[0], key[1], key[2])
-            if key_tuple in planned_keys:
+            if key in planned_keys:
                 raise FileExistsError(
                     'batch would create multiple physical variants of one '
                     f'logical EEE result: {artifact.path}'
                 )
             _reject_existing_variant(artifact.path)
-            planned_keys.add(key_tuple)
+            planned_keys.add(key)
             prepared.append(artifact)
         aggregate_paths.append(aggregate_path)
 

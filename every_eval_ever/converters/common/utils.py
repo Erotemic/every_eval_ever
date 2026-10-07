@@ -4,9 +4,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from every_eval_ever import io as eee_io
+
 _UUID_FILE_RE = re.compile(
     r'(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})'
-    r'(?:_samples)?(?:\.jsonl?)?(?:\.(?:gz|zst|bz2|xz|lz4))?$',
+    r'(?:_samples)?(?:\.jsonl?)?$',
     re.IGNORECASE,
 )
 
@@ -36,11 +38,14 @@ def extract_file_uuid_from_detailed_results(log: Any) -> str | None:
     detailed = getattr(log, 'detailed_evaluation_results', None)
     if not detailed:
         return None
+
     file_path = getattr(detailed, 'file_path', None)
     if not file_path:
         return None
-    filename = Path(str(file_path)).name
+
+    filename = eee_io.strip_compression_suffix(Path(str(file_path))).name
     uuid_match = _UUID_FILE_RE.search(filename)
     if uuid_match:
         return uuid_match.group('uuid')
+
     return None

@@ -8,13 +8,16 @@ import lzma
 import sys
 from collections import defaultdict
 from collections.abc import Container, Iterable, Iterator
+from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
-from typing import Literal, TextIO
+from typing import Literal, TextIO, cast
 
 Compression = Literal['none', 'gz', 'zst', 'bz2', 'xz', 'lz4']
 ResultKind = Literal['aggregate', 'samples']
+ResultKey = tuple[Path, str, ResultKind]
 
-COMPRESSION_NONE = 'none'
+COMPRESSION_NONE: Compression = 'none'
 COMPRESSION_CHOICES: tuple[Compression, ...] = (
     'none',
     'gz',
@@ -71,7 +74,7 @@ def normalize_compression(compression: str) -> Compression:
             f'unsupported compression {compression!r}; '
             f'choose from {COMPRESSION_CHOICES}'
         )
-    return compression  # type: ignore[return-value]
+    return cast(Compression, compression)
 
 
 def strip_compression_suffix(path: str | Path) -> Path:
@@ -136,9 +139,7 @@ def eee_uuid_stem(path: str | Path) -> str | None:
     return None
 
 
-def logical_result_key(
-    path: str | Path,
-) -> tuple[Path, str, ResultKind] | None:
+def logical_result_key(path: str | Path) -> ResultKey | None:
     """Return directory, logical stem, and kind for a result path."""
     path = Path(path)
     kind = is_eee_result(path)
@@ -201,9 +202,7 @@ def find_duplicate_variants(
     paths: Iterable[str | Path],
 ) -> list[tuple[Path, str, ResultKind, list[Path]]]:
     """Return logical results that have more than one physical variant."""
-    grouped: dict[
-        tuple[Path, str, ResultKind], list[Path]
-    ] = defaultdict(list)
+    grouped: dict[ResultKey, list[Path]] = defaultdict(list)
     seen: set[Path] = set()
     for raw_path in paths:
         path = Path(raw_path)
@@ -282,7 +281,13 @@ def open_eee_text(path: str | Path, mode: str = 'r') -> TextIO:
 
 
 def _is_codec_exception(exc: Exception, compression: Compression) -> bool:
-    if isinstance(exc, (EOFError, OSError, UnicodeError)):
+    if isinstance(exc, (EOFError, UnicodeError)):
+        return True
+    if isinstance(exc, OSError):
+        # Codec libraries also use OSError for malformed streams, but genuine
+        # filesystem errors carry errno and should stay ordinary I/O errors.
+        if exc.errno is not None:
+            return False
         return True
     if compression == 'xz' and isinstance(exc, lzma.LZMAError):
         return True
@@ -292,46 +297,43 @@ def _is_codec_exception(exc: Exception, compression: Compression) -> bool:
             return isinstance(exc, _import_zstd().ZstdError)
         except CodecUnavailableError:
             return False
-    if compression == 'lz4' and module.startswith('lz4'):
-        return True
+    if compression == 'lz4':
+        # python-lz4 reports malformed frames as built-in RuntimeError rather
+        # than a package-specific exception type.
+        return isinstance(exc, RuntimeError) or module.startswith('lz4')
     return False
 
 
-def _normalized_read_error(path: str | Path, exc: Exception) -> Exception:
-    compression = detect_compression(path)
-    if compression != 'none' and _is_codec_exception(exc, compression):
-        return CompressedReadError(
+@contextmanager
+def _normalize_read_errors(path: str | Path) -> Iterator[None]:
+    """Translate codec-specific failures into one public read error."""
+    try:
+        yield
+    except CodecUnavailableError:
+        raise
+    except Exception as exc:
+        compression = detect_compression(path)
+        if compression == COMPRESSION_NONE or not _is_codec_exception(
+            exc, compression
+        ):
+            raise
+        raise CompressedReadError(
             f'could not decode {Path(path).name} as {compression}: {exc}'
-        )
-    return exc
+        ) from exc
 
 
 def read_eee_text(path: str | Path) -> str:
     """Read a complete EEE text file and normalize codec failures."""
-    try:
+    with _normalize_read_errors(path):
         with open_eee_text(path, 'r') as handle:
             return handle.read()
-    except CodecUnavailableError:
-        raise
-    except Exception as exc:
-        normalized = _normalized_read_error(path, exc)
-        if normalized is exc:
-            raise
-        raise normalized from exc
 
 
 def iter_eee_text_lines(path: str | Path) -> Iterator[str]:
     """Iterate every line in an EEE result and normalize codec failures."""
-    try:
+    with _normalize_read_errors(path):
         with open_eee_text(path, 'r') as handle:
             yield from handle
-    except CodecUnavailableError:
-        raise
-    except Exception as exc:
-        normalized = _normalized_read_error(path, exc)
-        if normalized is exc:
-            raise
-        raise normalized from exc
 
 
 def compress_bytes(content: bytes, compression: str) -> bytes:
@@ -340,7 +342,12 @@ def compress_bytes(content: bytes, compression: str) -> bytes:
     if compression == 'none':
         return content
     if compression == 'gz':
-        return gzip.compress(content, mtime=0)
+        # GzipFile avoids the Python 3.12 gzip.compress(mtime=0) fast path,
+        # whose header OS byte can vary with the underlying zlib/platform.
+        buffer = BytesIO()
+        with gzip.GzipFile(fileobj=buffer, mode='wb', mtime=0) as handle:
+            handle.write(content)
+        return buffer.getvalue()
     if compression == 'bz2':
         return bz2.compress(content)
     if compression == 'xz':

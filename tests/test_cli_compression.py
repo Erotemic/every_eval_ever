@@ -1,5 +1,7 @@
 from argparse import Namespace
 
+import pytest
+
 from every_eval_ever import cli
 
 
@@ -46,3 +48,9 @@ def test_publication_kwargs_omit_default_compression():
     assert cli._publication_compression_kwargs(args) == {
         'samples_compression': 'xz',
     }
+
+
+def test_compression_resolution_validates_legacy_namespace():
+    args = Namespace(compress='zip')
+    with pytest.raises(ValueError, match='unsupported compression'):
+        cli._resolved_compression(args, 'aggregate')

@@ -17,3 +17,9 @@ def test_explicit_samples_file_is_not_silently_ignored(tmp_path: Path):
     path.write_text('{}\n', encoding='utf-8')
     with pytest.raises(SystemExit):
         checker.main([str(path)])
+
+
+def test_non_object_aggregate_is_reported_not_crashed(tmp_path: Path):
+    path = tmp_path / 'x.json'
+    path.write_text('[]', encoding='utf-8')
+    assert checker.main([str(path)]) == 1
