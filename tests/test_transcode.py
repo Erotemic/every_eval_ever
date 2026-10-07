@@ -21,6 +21,7 @@ from every_eval_ever.validator.json_utils import strict_json_loads
 from tests.test_validation_scope import UUID, valid_aggregate, valid_sample
 
 UUID2 = '660e8400-e29b-41d4-a716-446655440001'
+UUID3 = '770e8400-e29b-41d4-a716-446655440002'
 
 
 def _stored_digest(path: Path, algorithm: str = 'sha256') -> str:
@@ -318,3 +319,101 @@ def test_commit_failure_rolls_back_original_pair(tmp_path, monkeypatch):
     assert not aggregate.with_name(f'{aggregate.name}.gz').exists()
     assert not samples.with_name(f'{samples.name}.gz').exists()
     assert not list(aggregate.parent.glob('.eee-transcode-*'))
+
+
+
+def _snapshot_tree(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob('*'))
+        if path.is_file()
+    }
+
+
+def _validate_tree(root: Path, data_root: Path) -> list[Path]:
+    paths = list(eee_io.iter_eee_results([data_root]))
+    repository = {
+        path.relative_to(root).as_posix(): path
+        for path in paths
+    }
+
+    def read_repo_file(repo_path: str) -> str:
+        return eee_io.read_eee_text(repository[repo_path])
+
+    from every_eval_ever.validator.validation_core import validate_file
+
+    for path in paths:
+        repo_path = path.relative_to(root).as_posix()
+        report = validate_file(
+            path,
+            repo_path=repo_path,
+            available_files=repository,
+            read_repo_file=read_repo_file,
+            run_semantic_checks=True,
+        )
+        assert report.valid, (path, report.errors)
+    return paths
+
+
+def test_directory_transcode_synthetic_datastore_tree_end_to_end(tmp_path):
+    """Exercise the bulk migration workflow without relying on external data."""
+    aggregate1, samples1, sample1_bytes, _ = _write_pair(
+        tmp_path, file_uuid=UUID
+    )
+    aggregate2, samples2, sample2_bytes, _ = _write_pair(
+        tmp_path, file_uuid=UUID2
+    )
+
+    folder = aggregate1.parent
+    aggregate3 = folder / f'{UUID3}.json'
+    aggregate3_bytes = (
+        json.dumps(valid_aggregate(), separators=(',', ':')).encode('utf-8')
+        + b'\r\n'
+    )
+    aggregate3.write_bytes(aggregate3_bytes)
+
+    # Seed a realistic mixed-storage tree: one plain pair, one gzip pair,
+    # and one bzip2 aggregate-only result.
+    [pair2_gz] = transcode_paths([str(aggregate2)], 'gz')
+    [aggregate3_bz2] = transcode_paths([str(aggregate3)], 'bz2')
+    assert pair2_gz.samples_path is not None
+    assert aggregate3_bz2.samples_path is None
+
+    data_root = tmp_path / 'data'
+    before_dry_run = _snapshot_tree(data_root)
+
+    dry_run = transcode_paths([str(data_root)], 'xz', dry_run=True)
+    assert len(dry_run) == 3
+    assert all(result.changed for result in dry_run)
+    assert _snapshot_tree(data_root) == before_dry_run
+    assert not list(data_root.rglob('.eee-transcode-*'))
+
+    migration = transcode_paths([str(data_root)], 'xz')
+    assert len(migration) == 3
+    assert all(result.changed for result in migration)
+
+    xz_paths = _validate_tree(tmp_path, data_root)
+    assert len(xz_paths) == 5
+    assert {eee_io.detect_compression(path) for path in xz_paths} == {'xz'}
+
+    sample1_xz = folder / f'{UUID}_samples.jsonl.xz'
+    sample2_xz = folder / f'{UUID2}_samples.jsonl.xz'
+    aggregate3_xz = folder / f'{UUID3}.json.xz'
+    assert eee_io.read_eee_bytes(sample1_xz) == sample1_bytes
+    assert eee_io.read_eee_bytes(sample2_xz) == sample2_bytes
+    assert eee_io.read_eee_bytes(aggregate3_xz) == aggregate3_bytes
+
+    # The same bulk operation is the inverse: migrate the entire tree back to
+    # the canonical uncompressed physical representation and revalidate it.
+    restored = transcode_paths([str(data_root)], 'none')
+    assert len(restored) == 3
+    assert all(result.changed for result in restored)
+
+    plain_paths = _validate_tree(tmp_path, data_root)
+    assert len(plain_paths) == 5
+    assert {eee_io.detect_compression(path) for path in plain_paths} == {'none'}
+    assert samples1.read_bytes() == sample1_bytes
+    assert samples2.read_bytes() == sample2_bytes
+    assert aggregate3.read_bytes() == aggregate3_bytes
+    assert not list(data_root.rglob('.eee-transcode-*'))
+
