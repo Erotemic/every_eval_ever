@@ -565,14 +565,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='every_eval_ever',
         description=(
-            'CLI for validating and converting evaluation results into the '
-            'Every Eval Ever schema.'
+            'CLI for validating, converting, and transcoding evaluation '
+            'results in the Every Eval Ever schema.'
         ),
         epilog=(
             'Examples:\n'
             '  every_eval_ever convert lm_eval --log_path results.json --output_dir data\n'
             '  every_eval_ever convert inspect --log_path inspect_log.json --output_dir data\n'
-            '  every_eval_ever convert helm --log_path helm_run_dir --output_dir data'
+            '  every_eval_ever convert helm --log_path helm_run_dir --output_dir data\n'
+            '  every_eval_ever transcode data --to zst'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -619,6 +620,35 @@ def build_parser() -> argparse.ArgumentParser:
         'paths',
         nargs='+',
         help='One or more JSON files or directories containing JSON files.',
+    )
+
+    transcode_parser = subparsers.add_parser(
+        'transcode',
+        help='Change the physical compression of existing EEE results',
+        description=(
+            'Transcode existing aggregate/sample result pairs while preserving '
+            'their logical contents and repository relationships.'
+        ),
+    )
+    transcode_parser.add_argument(
+        'paths',
+        nargs='+',
+        help=(
+            'Aggregate/sample files, directories, or glob patterns. Sample '
+            'paths are resolved back to their aggregate record.'
+        ),
+    )
+    transcode_parser.add_argument(
+        '--to',
+        dest='transcode_compression',
+        choices=eee_io.COMPRESSION_CHOICES,
+        required=True,
+        help='Target physical compression. Use none to decompress.',
+    )
+    transcode_parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Validate and show planned replacements without modifying files.',
     )
 
     convert_parser = subparsers.add_parser(
@@ -835,6 +865,40 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         return check_duplicates_main(args.paths)
+
+    if args.command == 'transcode':
+        from every_eval_ever.transcode import TranscodeError, transcode_paths
+
+        try:
+            results = transcode_paths(
+                args.paths,
+                args.transcode_compression,
+                dry_run=args.dry_run,
+            )
+        except (TranscodeError, eee_io.CodecUnavailableError) as exc:
+            print(f'transcode: {exc}', file=sys.stderr)
+            return 1
+
+        action = 'Would transcode' if args.dry_run else 'Transcoded'
+        changed = sum(result.changed for result in results)
+        print(
+            f'{action} {changed} of {len(results)} logical result(s) '
+            f'to {args.transcode_compression}.'
+        )
+        for result in results:
+            if not result.changed:
+                print(f'  unchanged: {result.aggregate_path}')
+                continue
+            print(
+                f'  {result.source_aggregate_path} -> '
+                f'{result.aggregate_path}'
+            )
+            if result.source_samples_path is not None:
+                print(
+                    f'  {result.source_samples_path} -> '
+                    f'{result.samples_path}'
+                )
+        return 0
 
     if args.command == 'convert':
         if args.source == 'lm_eval':

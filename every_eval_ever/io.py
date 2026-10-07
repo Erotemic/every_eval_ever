@@ -11,7 +11,7 @@ from collections.abc import Container, Iterable, Iterator
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
-from typing import Literal, TextIO, cast
+from typing import BinaryIO, Literal, TextIO, cast
 
 Compression = Literal['none', 'gz', 'zst', 'bz2', 'xz', 'lz4']
 ResultKind = Literal['aggregate', 'samples']
@@ -251,6 +251,55 @@ def _import_lz4_frame():
     return lz4.frame
 
 
+@contextmanager
+def open_eee_binary(
+    path: str | Path, mode: str = 'rb'
+) -> Iterator[BinaryIO]:
+    """Open a plain or compressed EEE result as a binary stream."""
+    if mode not in {'rb', 'wb'}:
+        raise ValueError(f"mode must be 'rb' or 'wb'; got {mode!r}")
+
+    path = Path(path)
+    compression = detect_compression(path)
+    if compression == 'none':
+        with path.open(mode) as handle:
+            yield handle
+        return
+    if compression == 'gz':
+        if mode == 'rb':
+            with gzip.open(path, mode) as handle:
+                yield handle
+        else:
+            # Keep gzip publication/transcoding deterministic on every
+            # supported Python version and do not embed a temporary filename.
+            with path.open('wb') as raw_handle:
+                with gzip.GzipFile(
+                    filename='',
+                    mode='wb',
+                    fileobj=raw_handle,
+                    mtime=0,
+                ) as handle:
+                    yield handle
+        return
+    if compression == 'bz2':
+        with bz2.open(path, mode) as handle:
+            yield handle
+        return
+    if compression == 'xz':
+        with lzma.open(path, mode) as handle:
+            yield handle
+        return
+    if compression == 'zst':
+        with _import_zstd().open(path, mode=mode) as handle:
+            yield handle
+        return
+    if compression == 'lz4':
+        with _import_lz4_frame().open(path, mode=mode) as handle:
+            yield handle
+        return
+    raise AssertionError(f'unhandled compression {compression!r}')
+
+
 def open_eee_text(path: str | Path, mode: str = 'r') -> TextIO:
     """Open a plain or compressed EEE result as UTF-8 text."""
     if mode in {'r', 'rt'}:
@@ -320,6 +369,26 @@ def _normalize_read_errors(path: str | Path) -> Iterator[None]:
         raise CompressedReadError(
             f'could not decode {Path(path).name} as {compression}: {exc}'
         ) from exc
+
+
+def iter_eee_binary_chunks(
+    path: str | Path, *, chunk_size: int = 1024 * 1024
+) -> Iterator[bytes]:
+    """Yield the uncompressed bytes of an EEE result without buffering it."""
+    if chunk_size <= 0:
+        raise ValueError('chunk_size must be positive')
+    with _normalize_read_errors(path):
+        with open_eee_binary(path, 'rb') as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+
+def read_eee_bytes(path: str | Path) -> bytes:
+    """Read the complete uncompressed byte payload of an EEE result."""
+    return b''.join(iter_eee_binary_chunks(path))
 
 
 def read_eee_text(path: str | Path) -> str:

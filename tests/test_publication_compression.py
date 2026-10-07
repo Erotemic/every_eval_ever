@@ -13,6 +13,7 @@ from every_eval_ever.converters.lm_eval.instance_level_adapter import (
     LMEvalInstanceLevelAdapter,
 )
 from every_eval_ever.helpers.io import datastore_output_dir
+from every_eval_ever.validator.validation_core import validate_file
 
 LM_EVAL_DIR = Path('tests/data/lm_eval')
 RESULTS_FILE = LM_EVAL_DIR / 'results_2026-01-21T03-44-18.458309.json'
@@ -76,6 +77,8 @@ def test_publisher_compresses_final_samples_and_updates_pointer(tmp_path: Path):
     with gzip.open(sample_path, 'rt', encoding='utf-8') as file:
         rows = [json.loads(line) for line in file if line.strip()]
     assert len(rows) == detail['total_rows']
+    report = validate_file(aggregate_path)
+    assert report.valid, report.errors
 
 
 def test_publisher_compresses_aggregate_at_shared_boundary(tmp_path: Path):

@@ -54,3 +54,13 @@ def test_compression_resolution_validates_legacy_namespace():
     args = Namespace(compress='zip')
     with pytest.raises(ValueError, match='unsupported compression'):
         cli._resolved_compression(args, 'aggregate')
+
+
+def test_transcode_parser():
+    args = cli.build_parser().parse_args(
+        ['transcode', 'data', '--to', 'gz', '--dry-run']
+    )
+    assert args.command == 'transcode'
+    assert args.paths == ['data']
+    assert args.transcode_compression == 'gz'
+    assert args.dry_run is True
